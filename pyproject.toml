@@ -1,0 +1,25 @@
+[project]
+name = "time-plot"
+version = "0.1.0"
+description = "Plot generic time-series data using DyGraph."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "click",
+    "dygraph>=0.0.12",
+    "numpy",
+]
+
+[project.scripts]
+time_plot = "time_plot.cli:cli"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.2",
+    "ty>=0.0.18",
+]
+
+[build-system]
+requires = []
+build-backend = "local_build_backend"
+backend-path = ["."]
