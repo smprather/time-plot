@@ -58,7 +58,12 @@ def load_input_files(
     plugins: list[ParserPlugin],
 ) -> list[LoadedDataset]:
     loaded: list[LoadedDataset] = []
+    seen_dataset_names: set[str] = set()
     for spec in input_files:
+        if spec.dataset_name in seen_dataset_names:
+            msg = f"Duplicate dataset name: {spec.dataset_name}"
+            raise ValueError(msg)
+        seen_dataset_names.add(spec.dataset_name)
         plugin = select_plugin(spec.path, plugins)
         series = plugin.parse(spec.path)
         dataset_name = spec.dataset_name
@@ -138,7 +143,12 @@ def evaluate_expressions(
             msg = f"Duplicate dataset name: {expr.dataset_name}"
             raise ValueError(msg)
 
-    expr_by_name = {expr.dataset_name: expr for expr in expressions}
+    expr_by_name: dict[str, ExpressionSpec] = {}
+    for expr in expressions:
+        if expr.dataset_name in expr_by_name:
+            msg = f"Duplicate dataset name: {expr.dataset_name}"
+            raise ValueError(msg)
+        expr_by_name[expr.dataset_name] = expr
     _validate_expression_names(expr_by_name, values_by_name.keys())
     eval_order = _expression_eval_order(expr_by_name, set(values_by_name))
 
@@ -235,12 +245,13 @@ def _uniform_grid(x_min: float, x_max: float, dt: float) -> np.ndarray:
         raise ValueError(msg)
 
     # Deterministic grid anchored at global minimum x using the smallest source dx.
-    steps = max(0, int(np.ceil((span / dt) - 1e-12)))
+    ratio = span / dt if dt else 0.0
+    steps = max(0, int(np.floor(ratio + 1e-12)))
     grid = x_min + (np.arange(steps + 1, dtype=np.float64) * dt)
     if grid.size == 0:
         return np.asarray([x_min], dtype=np.float64)
     if grid[-1] < x_max and not np.isclose(grid[-1], x_max):
-        grid = np.append(grid, grid[-1] + dt)
+        grid = np.append(grid, x_max)
     return grid
 
 
