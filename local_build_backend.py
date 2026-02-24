@@ -241,7 +241,7 @@ def _wheel_file_list() -> list[Path]:
     files: list[Path] = []
     files.extend(_iter_files(Path("time_plot")))
     files.extend(_iter_files(Path("plugins")))
-    files.extend(_iter_files(Path("sample-data")))
+    files.extend(_iter_files(Path("sample_data")))
     return sorted(files)
 
 
