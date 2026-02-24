@@ -15,8 +15,15 @@ DYGRAPHS_VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor" / "dygra
 def write_dygraphs_html(series: SeriesData, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    rows = [[float(x), float(y)] for x, y in zip(series.x.tolist(), series.y.tolist())]
+    x_display_values, x_axis_label = series.x_display()
+    y_display_values, y_axis_label = series.y_display()
+    rows = [
+        [float(x), float(y)]
+        for x, y in zip(x_display_values.tolist(), y_display_values.tolist())
+    ]
     html = _render_html(series, rows)
+    html = html.replace("__X_AXIS_LABEL__", html_escape_json_string(x_axis_label))
+    html = html.replace("__Y_AXIS_LABEL__", html_escape_json_string(y_axis_label))
     output_path.write_text(html, encoding="utf-8")
     return output_path
 
@@ -25,8 +32,8 @@ def _render_html(series: SeriesData, rows: list[list[float]]) -> str:
     rows_json = json.dumps(rows)
     labels_json = json.dumps([series.x_label, series.y_label])
     title_json = json.dumps(series.source_name)
-    xlabel_json = json.dumps(series.x_axis_label)
-    ylabel_json = json.dumps(series.y_axis_label)
+    xlabel_json = "__X_AXIS_LABEL__"
+    ylabel_json = "__Y_AXIS_LABEL__"
     safe_title = html.escape(series.source_name)
     safe_source_name = html.escape(series.source_name)
     dygraphs_css_tag, dygraphs_js_tag = _dygraphs_asset_tags()
@@ -170,3 +177,7 @@ def _dygraphs_asset_tags() -> tuple[str, str]:
 def _strip_source_map_comments(text: str) -> str:
     lines = [line for line in text.splitlines() if "sourceMappingURL=" not in line]
     return "\n".join(lines)
+
+
+def html_escape_json_string(value: str) -> str:
+    return json.dumps(value)

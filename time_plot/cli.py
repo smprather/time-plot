@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
 
 import click
 
 from time_plot.plotting import write_dygraphs_html
 from time_plot.plugin_system import discover_plugins, select_plugin
-from time_plot.sample_data import write_voltage_time_sample_csv
+from time_plot.sample_data import write_example_data_files, write_voltage_time_sample_csv
 
 
 def _repo_root() -> Path:
@@ -18,7 +19,27 @@ def _default_plugins_dir() -> Path:
 
 
 def _default_sample_path() -> Path:
-    return _repo_root() / "sample-data" / "voltage_time_sample.csv"
+    return _repo_root() / "sample_data" / "sine.csv"
+
+
+@dataclass(slots=True)
+class CliSourceSpec:
+    name: str | None
+    raw: str
+    kind: str  # "file" | "expr"
+
+
+def parse_cli_source_spec(arg: str) -> CliSourceSpec:
+    name: str | None = None
+    raw = arg
+    if ":" in arg:
+        possible_name, remainder = arg.split(":", 1)
+        if possible_name and remainder:
+            name = possible_name
+            raw = remainder
+
+    kind = "expr" if raw.startswith("expr[") and raw.endswith("]") else "file"
+    return CliSourceSpec(name=name, raw=raw, kind=kind)
 
 
 @click.group()
@@ -27,11 +48,7 @@ def cli() -> None:
 
 
 @cli.command()
-@click.argument(
-    "input_file",
-    required=False,
-    type=click.Path(path_type=Path, dir_okay=False, exists=True),
-)
+@click.argument("sources", nargs=-1, type=str)
 @click.option(
     "-o",
     "--output",
@@ -46,14 +63,27 @@ def cli() -> None:
     default=None,
     help="Directory containing parser plugins (.py files).",
 )
-def plot(input_file: Path | None, output_path: Path | None, plugins_dir: Path | None) -> None:
+def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path | None) -> None:
     """Parse a data file with the first matching plugin and write a Dygraphs HTML plot."""
 
-    source_file = input_file or _default_sample_path()
+    if not sources:
+        source_specs = [CliSourceSpec(name=None, raw=str(_default_sample_path()), kind="file")]
+    else:
+        source_specs = [parse_cli_source_spec(value) for value in sources]
+
+    expr_specs = [spec for spec in source_specs if spec.kind == "expr"]
+    if expr_specs:
+        raise click.ClickException("Expression inputs `expr[...]` are not implemented yet.")
+
+    if len(source_specs) > 1:
+        raise click.ClickException("Multiple input sources are not implemented yet.")
+
+    source_spec = source_specs[0]
+    source_file = Path(source_spec.raw)
     if not source_file.exists():
         msg = (
             f"Input file not found: {source_file}\n"
-            "Run `python main.py sample` to generate the sample file."
+            "Run `python main.py sample-files` to generate example files."
         )
         raise click.ClickException(msg)
 
@@ -72,6 +102,8 @@ def plot(input_file: Path | None, output_path: Path | None, plugins_dir: Path | 
     written = write_dygraphs_html(series, final_output)
 
     click.echo(f"Plugin: {plugin.plugin_name}")
+    if source_spec.name:
+        click.echo(f"Name:   {source_spec.name}")
     click.echo(f"Input:  {source_file}")
     click.echo(f"Output: {written}")
 
@@ -100,6 +132,23 @@ def generate_sample(output_path: Path | None, points: int) -> None:
     click.echo(f"Wrote sample CSV: {written}")
 
 
+@cli.command("sample-files")
+@click.option(
+    "-d",
+    "--dir",
+    "output_dir",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=None,
+    help="Output directory for generated example CSV files.",
+)
+def generate_sample_files(output_dir: Path | None) -> None:
+    """Generate the seed example data files used for development/tests."""
+
+    destination = output_dir or (_repo_root() / "sample_data")
+    written = write_example_data_files(destination)
+    for path in written:
+        click.echo(f"Wrote example CSV: {path}")
+
+
 def main() -> None:
     cli()
-

@@ -15,6 +15,7 @@ time_plot = "time_plot.cli:cli"
 
 [dependency-groups]
 dev = [
+    "pytest>=8.0.0",
     "ruff>=0.15.2",
     "ty>=0.0.18",
 ]
