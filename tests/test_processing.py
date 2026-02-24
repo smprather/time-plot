@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 from time_plot.models import SeriesData
-from time_plot.processing import LoadedDataset, align_loaded_datasets
+from time_plot.processing import (
+    ExpressionSpec,
+    LoadedDataset,
+    align_loaded_datasets,
+    combine_plot_data,
+    evaluate_expressions,
+)
 
 
 def _loaded(
@@ -55,3 +61,38 @@ def test_align_loaded_datasets_rejects_non_monotonic_x() -> None:
 
     with pytest.raises(ValueError, match="strictly increasing"):
         align_loaded_datasets([bad])
+
+
+def test_evaluate_expressions_supports_math_and_ddt() -> None:
+    a = _loaded(legend="a", x=[0.0, 1.0, 2.0], y=[0.0, 1.0, 3.0])
+    b = _loaded(legend="b", x=[0.0, 1.0, 2.0], y=[10.0, 20.0, 40.0])
+    a.dataset_name = "f1"
+    b.dataset_name = "f2"
+    aligned = align_loaded_datasets([a, b])
+
+    exprs = [
+        ExpressionSpec(arg_position=3, dataset_name="sum", legend_name="sum", expression_text="f1+f2"),
+        ExpressionSpec(arg_position=4, dataset_name="rate", legend_name="rate", expression_text="ddt(sum)"),
+    ]
+    traces = evaluate_expressions(aligned, exprs)
+    combined = combine_plot_data(aligned, traces)
+
+    assert len(traces) == 2
+    sum_trace = next(t for t in combined.traces if t.dataset_name == "sum")
+    rate_trace = next(t for t in combined.traces if t.dataset_name == "rate")
+    np.testing.assert_allclose(sum_trace.y, np.asarray([10.0, 21.0, 43.0]))
+    np.testing.assert_allclose(rate_trace.y, np.asarray([11.0, 11.0, 22.0]))
+    assert rate_trace.y_unit == "v/s"
+
+
+def test_evaluate_expressions_detects_circular_reference() -> None:
+    base = _loaded(legend="a", x=[0.0, 1.0], y=[0.0, 1.0])
+    base.dataset_name = "f1"
+    aligned = align_loaded_datasets([base])
+
+    exprs = [
+        ExpressionSpec(arg_position=2, dataset_name="foo", legend_name="foo", expression_text="bar"),
+        ExpressionSpec(arg_position=3, dataset_name="bar", legend_name="bar", expression_text="foo"),
+    ]
+    with pytest.raises(ValueError, match="Circular expression reference"):
+        evaluate_expressions(aligned, exprs)

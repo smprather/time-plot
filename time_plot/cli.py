@@ -6,7 +6,16 @@ from dataclasses import dataclass
 import click
 
 from time_plot.plotting import write_multi_dygraphs_html
-from time_plot.processing import InputFileSpec, align_loaded_datasets, load_input_files
+from time_plot.processing import (
+    ExpressionSpec,
+    InputFileSpec,
+    align_loaded_datasets,
+    combine_plot_data,
+    default_dataset_name,
+    evaluate_expressions,
+    expression_legend_name,
+    load_input_files,
+)
 from time_plot.plugin_system import discover_plugins
 from time_plot.sample_data import write_example_data_files, write_voltage_time_sample_csv
 
@@ -72,12 +81,22 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
     else:
         source_specs = [parse_cli_source_spec(value) for value in sources]
 
-    expr_specs = [spec for spec in source_specs if spec.kind == "expr"]
-    if expr_specs:
-        raise click.ClickException("Expression inputs `expr[...]` are not implemented yet.")
-
     file_specs: list[InputFileSpec] = []
+    expression_specs: list[ExpressionSpec] = []
     for position, source_spec in enumerate(source_specs, start=1):
+        dataset_name = source_spec.name or default_dataset_name(position)
+        if source_spec.kind == "expr":
+            expression_text = source_spec.raw[5:-1]
+            expression_specs.append(
+                ExpressionSpec(
+                    arg_position=position,
+                    dataset_name=dataset_name,
+                    legend_name=expression_legend_name(source_spec.name, expression_text),
+                    expression_text=expression_text,
+                ),
+            )
+            continue
+
         source_file = Path(source_spec.raw)
         if not source_file.exists():
             msg = (
@@ -89,6 +108,7 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
             InputFileSpec(
                 arg_position=position,
                 path=source_file,
+                dataset_name=dataset_name,
                 cli_name=source_spec.name,
             ),
         )
@@ -100,7 +120,9 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
 
     try:
         loaded = load_input_files(file_specs, plugins)
-        aligned = align_loaded_datasets(loaded)
+        aligned_files = align_loaded_datasets(loaded)
+        expr_traces = evaluate_expressions(aligned_files, expression_specs)
+        aligned = combine_plot_data(aligned_files, expr_traces)
     except (LookupError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -109,15 +131,19 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         if len(loaded) == 1
         else (_repo_root() / "plots" / "combined.html")
     )
-    title = loaded[0].series.source_name if len(loaded) == 1 else ", ".join(
-        dataset.legend_name for dataset in loaded
-    )
+    title_parts = [dataset.legend_name for dataset in loaded] + [expr.legend_name for expr in expression_specs]
+    title = loaded[0].series.source_name if len(title_parts) == 1 and loaded else ", ".join(title_parts)
     written = write_multi_dygraphs_html(aligned, final_output, title=title)
 
     for dataset in loaded:
         click.echo(f"Plugin: {dataset.plugin_name}")
         click.echo(f"Input:  {dataset.source_path}")
         click.echo(f"Legend: {dataset.legend_name}")
+        click.echo(f"Name:   {dataset.dataset_name}")
+    for expr in expression_specs:
+        click.echo(f"Expr:   {expr.expression_text}")
+        click.echo(f"Legend: {expr.legend_name}")
+        click.echo(f"Name:   {expr.dataset_name}")
     click.echo(f"Output: {written}")
 
 

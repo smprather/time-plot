@@ -18,6 +18,7 @@ DYGRAPHS_VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor" / "dygra
 
 def write_dygraphs_html(series: SeriesData, output_path: Path) -> Path:
     trace = AlignedTrace(
+        dataset_name="f1",
         legend_name=series.y_label,
         source_name=series.source_name,
         y_label=series.y_label,
