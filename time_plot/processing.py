@@ -42,6 +42,7 @@ class AlignedTrace:
 class AlignedPlotData:
     x_seconds: np.ndarray
     traces: list[AlignedTrace]
+    x_timestep_seconds: float | None = None
     x_display_prefix: str | None = None
 
 
@@ -117,6 +118,7 @@ def align_loaded_datasets(datasets: list[LoadedDataset]) -> AlignedPlotData:
     return AlignedPlotData(
         x_seconds=x_grid,
         traces=traces,
+        x_timestep_seconds=dt,
         x_display_prefix=datasets[0].series.x_display_prefix,
     )
 
@@ -186,6 +188,7 @@ def combine_plot_data(
     return AlignedPlotData(
         x_seconds=aligned_files.x_seconds,
         traces=[*aligned_files.traces, *expression_traces],
+        x_timestep_seconds=aligned_files.x_timestep_seconds,
         x_display_prefix=aligned_files.x_display_prefix,
     )
 

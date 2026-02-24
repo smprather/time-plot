@@ -150,7 +150,50 @@ def build_editable(
     config_settings: dict[str, Any] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    return build_wheel(wheel_directory, config_settings, metadata_directory)
+    del config_settings, metadata_directory
+    project = _project_metadata()
+    dist = _wheel_dist_name(project["name"])
+    version = project["version"]
+    wheel_name = f"{dist}-{version}-py3-none-any.whl"
+    wheel_path = Path(wheel_directory) / wheel_name
+    wheel_path.parent.mkdir(parents=True, exist_ok=True)
+
+    dist_info = f"{dist}-{version}.dist-info"
+    records: list[tuple[str, bytes]] = []
+
+    with zipfile.ZipFile(wheel_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        pth_name = f"{dist}.pth"
+        pth_bytes = (str(ROOT) + "\n").encode("utf-8")
+        zf.writestr(pth_name, pth_bytes)
+        records.append((pth_name, pth_bytes))
+
+        metadata_path = f"{dist_info}/METADATA"
+        metadata_bytes = _metadata_text(project).encode("utf-8")
+        zf.writestr(metadata_path, metadata_bytes)
+        records.append((metadata_path, metadata_bytes))
+
+        wheel_meta_path = f"{dist_info}/WHEEL"
+        wheel_meta_bytes = (
+            "Wheel-Version: 1.0\n"
+            "Generator: local_build_backend\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ).encode("utf-8")
+        zf.writestr(wheel_meta_path, wheel_meta_bytes)
+        records.append((wheel_meta_path, wheel_meta_bytes))
+
+        scripts = project.get("scripts", {})
+        if scripts:
+            entry_points_path = f"{dist_info}/entry_points.txt"
+            entry_points_bytes = _entry_points_text(scripts).encode("utf-8")
+            zf.writestr(entry_points_path, entry_points_bytes)
+            records.append((entry_points_path, entry_points_bytes))
+
+        record_path = f"{dist_info}/RECORD"
+        record_bytes = _record_csv(records, record_path).encode("utf-8")
+        zf.writestr(record_path, record_bytes)
+
+    return wheel_name
 
 
 def _project_metadata() -> dict[str, Any]:

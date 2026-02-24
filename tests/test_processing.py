@@ -50,6 +50,7 @@ def test_align_loaded_datasets_uses_smallest_timestep_and_interpolates() -> None
     aligned = align_loaded_datasets([a, b])
 
     np.testing.assert_allclose(aligned.x_seconds, np.asarray([0.0, 1.0, 2.0, 2.5]))
+    assert aligned.x_timestep_seconds == 1.0
     assert len(aligned.traces) == 2
     np.testing.assert_allclose(aligned.traces[0].y[:3], np.asarray([0.0, 1.0, 2.0]))
     assert np.isnan(aligned.traces[0].y[3])
@@ -80,6 +81,7 @@ def test_evaluate_expressions_supports_math_and_ddt() -> None:
     combined = combine_plot_data(aligned, traces)
 
     assert len(traces) == 2
+    assert combined.x_timestep_seconds == aligned.x_timestep_seconds
     sum_trace = next(t for t in combined.traces if t.dataset_name == "sum")
     rate_trace = next(t for t in combined.traces if t.dataset_name == "rate")
     np.testing.assert_allclose(sum_trace.y, np.asarray([10.0, 21.0, 43.0]))
