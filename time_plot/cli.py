@@ -5,8 +5,9 @@ from dataclasses import dataclass
 
 import click
 
-from time_plot.plotting import write_dygraphs_html
-from time_plot.plugin_system import discover_plugins, select_plugin
+from time_plot.plotting import write_multi_dygraphs_html
+from time_plot.processing import InputFileSpec, align_loaded_datasets, load_input_files
+from time_plot.plugin_system import discover_plugins
 from time_plot.sample_data import write_example_data_files, write_voltage_time_sample_csv
 
 
@@ -75,17 +76,22 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
     if expr_specs:
         raise click.ClickException("Expression inputs `expr[...]` are not implemented yet.")
 
-    if len(source_specs) > 1:
-        raise click.ClickException("Multiple input sources are not implemented yet.")
-
-    source_spec = source_specs[0]
-    source_file = Path(source_spec.raw)
-    if not source_file.exists():
-        msg = (
-            f"Input file not found: {source_file}\n"
-            "Run `python main.py sample-files` to generate example files."
+    file_specs: list[InputFileSpec] = []
+    for position, source_spec in enumerate(source_specs, start=1):
+        source_file = Path(source_spec.raw)
+        if not source_file.exists():
+            msg = (
+                f"Input file not found: {source_file}\n"
+                "Run `python main.py sample-files` to generate example files."
+            )
+            raise click.ClickException(msg)
+        file_specs.append(
+            InputFileSpec(
+                arg_position=position,
+                path=source_file,
+                cli_name=source_spec.name,
+            ),
         )
-        raise click.ClickException(msg)
 
     plugin_dir = plugins_dir or _default_plugins_dir()
     plugins = discover_plugins(plugin_dir)
@@ -93,18 +99,25 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         raise click.ClickException(f"No plugins found in {plugin_dir}")
 
     try:
-        plugin = select_plugin(source_file, plugins)
-    except LookupError as exc:
+        loaded = load_input_files(file_specs, plugins)
+        aligned = align_loaded_datasets(loaded)
+    except (LookupError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
-    series = plugin.parse(source_file)
-    final_output = output_path or (_repo_root() / "plots" / f"{source_file.stem}.html")
-    written = write_dygraphs_html(series, final_output)
+    final_output = output_path or (
+        (_repo_root() / "plots" / f"{loaded[0].source_path.stem}.html")
+        if len(loaded) == 1
+        else (_repo_root() / "plots" / "combined.html")
+    )
+    title = loaded[0].series.source_name if len(loaded) == 1 else ", ".join(
+        dataset.legend_name for dataset in loaded
+    )
+    written = write_multi_dygraphs_html(aligned, final_output, title=title)
 
-    click.echo(f"Plugin: {plugin.plugin_name}")
-    if source_spec.name:
-        click.echo(f"Name:   {source_spec.name}")
-    click.echo(f"Input:  {source_file}")
+    for dataset in loaded:
+        click.echo(f"Plugin: {dataset.plugin_name}")
+        click.echo(f"Input:  {dataset.source_path}")
+        click.echo(f"Legend: {dataset.legend_name}")
     click.echo(f"Output: {written}")
 
 
