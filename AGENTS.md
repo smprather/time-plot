@@ -44,7 +44,7 @@ Guidance for coding agents working in this repository.
   - strict increasing x validation
 - Expression evaluation (safe AST):
   - operators: `+`, `-`, `*`, `/`
-  - functions: `sin()`, `cos()`, `ddt()`
+  - functions: `average()`, `rms()`, `abs()`, `ddt()`
   - chained expressions
   - circular reference detection
   - unknown reference detection
@@ -57,7 +57,7 @@ Guidance for coding agents working in this repository.
 
 ## Known Limitations (Current)
 
-- Expression function set is intentionally small (`sin`, `cos`, `ddt` only).
+- Expression function set is intentionally small (`average`, `rms`, `abs`, `ddt` only).
 - Expression unit handling is pragmatic:
   - `+/-` require matching units
   - `*` and `/` build composed unit strings (for example `v/s`, `v*v`)
@@ -67,7 +67,8 @@ Guidance for coding agents working in this repository.
 
 ## MVP Scope (Next Work)
 
-- Extend expression function set as needed (`abs`, `sqrt`, filters, etc.).
+- Extend expression function set as needed (`sqrt`, filters, etc.).
+  - sqrt() should be next. Don't do any other functions until requested.
 - Improve expression unit semantics/simplification.
 - Add more parser plugins (including a second y-axis type to exercise dual-axis behavior end-to-end).
 - Strengthen CLI/integration tests for error cases and mixed input scenarios.
@@ -177,7 +178,7 @@ Guidance for coding agents working in this repository.
 ## Expression Semantics
 
 - Supported operators (current minimum set): `+`, `-`, `*`, `/`
-- Supported functions (current minimum set): `sin()`, `cos()`, `ddt()`
+- Supported functions (current minimum set): `average()`, `rms()`, `abs()`, `ddt()`
 - `ddt()` rule:
   - derivative is computed by finite difference on aligned x-grid
   - first timestep value equals the second timestep value (when available)
@@ -185,7 +186,7 @@ Guidance for coding agents working in this repository.
   - `+/-`: units must match
   - `*`: composed unit string (for example `v*v`)
   - `/`: composed unit string (for example `v/s`)
-  - `sin/cos`: unitless result (`1`)
+  - `average/rms/abs`: preserves input unit
   - `ddt(x)`: unit becomes `<unit>/s`
 - Expressions are currently intended to be used with at least one file-backed input.
 

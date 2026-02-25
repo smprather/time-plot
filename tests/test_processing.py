@@ -123,6 +123,45 @@ def test_evaluate_expressions_rejects_unknown_reference() -> None:
         evaluate_expressions(aligned, exprs)
 
 
+def test_evaluate_expression_average() -> None:
+    a = _loaded(legend="a", x=[0.0, 1.0, 2.0], y=[2.0, 4.0, 6.0])
+    a.dataset_name = "f1"
+    aligned = align_loaded_datasets([a])
+
+    exprs = [ExpressionSpec(arg_position=2, dataset_name="avg", legend_name="avg", expression_text="average(f1)")]
+    traces = evaluate_expressions(aligned, exprs)
+
+    assert len(traces) == 1
+    np.testing.assert_allclose(traces[0].y, np.full(3, 4.0))
+    assert traces[0].y_unit == "v"
+
+
+def test_evaluate_expression_rms() -> None:
+    a = _loaded(legend="a", x=[0.0, 1.0, 2.0, 3.0], y=[1.0, -1.0, 1.0, -1.0])
+    a.dataset_name = "f1"
+    aligned = align_loaded_datasets([a])
+
+    exprs = [ExpressionSpec(arg_position=2, dataset_name="r", legend_name="r", expression_text="rms(f1)")]
+    traces = evaluate_expressions(aligned, exprs)
+
+    assert len(traces) == 1
+    np.testing.assert_allclose(traces[0].y, np.full(4, 1.0))
+    assert traces[0].y_unit == "v"
+
+
+def test_evaluate_expression_abs() -> None:
+    a = _loaded(legend="a", x=[0.0, 1.0, 2.0], y=[-3.0, 5.0, -7.0])
+    a.dataset_name = "f1"
+    aligned = align_loaded_datasets([a])
+
+    exprs = [ExpressionSpec(arg_position=2, dataset_name="mag", legend_name="mag", expression_text="abs(f1)")]
+    traces = evaluate_expressions(aligned, exprs)
+
+    assert len(traces) == 1
+    np.testing.assert_allclose(traces[0].y, np.asarray([3.0, 5.0, 7.0]))
+    assert traces[0].y_unit == "v"
+
+
 def test_load_input_files_rejects_duplicate_dataset_names(tmp_path: Path) -> None:
     csv_path = tmp_path / "dummy.csv"
     csv_path.write_text("time(ns),voltage(v)\n0,0\n1,1\n", encoding="utf-8")

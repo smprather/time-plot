@@ -344,7 +344,7 @@ def _referenced_names(expression_text: str) -> set[str]:
             self.generic_visit(node)
 
     Visitor().visit(root)
-    return refs - {"sin", "cos", "ddt"}
+    return refs - {"average", "rms", "abs", "ddt"}
 
 
 def _eval_expression(
@@ -436,14 +436,22 @@ def _eval_expr_node(
             msg = f"Function {fn_name}() expects exactly one argument"
             raise ValueError(msg)
         arg = _eval_expr_node(node.args[0], x_seconds, values_by_name, trace_meta_by_name)
-        if fn_name == "sin":
+        if fn_name == "average":
+            finite_vals = arg.values[arg.finite_mask]
+            mean_val = float(np.mean(finite_vals)) if finite_vals.size else np.nan
             values = np.full_like(x_seconds, np.nan, dtype=np.float64)
-            values[arg.finite_mask] = np.sin(arg.values[arg.finite_mask])
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label="Expression", y_unit="1")
-        if fn_name == "cos":
+            values[arg.finite_mask] = mean_val
+            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit)
+        if fn_name == "rms":
+            finite_vals = arg.values[arg.finite_mask]
+            rms_val = float(np.sqrt(np.mean(finite_vals**2))) if finite_vals.size else np.nan
             values = np.full_like(x_seconds, np.nan, dtype=np.float64)
-            values[arg.finite_mask] = np.cos(arg.values[arg.finite_mask])
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label="Expression", y_unit="1")
+            values[arg.finite_mask] = rms_val
+            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit)
+        if fn_name == "abs":
+            values = np.full_like(x_seconds, np.nan, dtype=np.float64)
+            values[arg.finite_mask] = np.abs(arg.values[arg.finite_mask])
+            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit)
         if fn_name == "ddt":
             values, mask = _ddt(arg.values, arg.finite_mask, x_seconds)
             return _ExprValue(values=values, finite_mask=mask, y_label=arg.y_label, y_unit=_ddt_unit(arg.y_unit))
