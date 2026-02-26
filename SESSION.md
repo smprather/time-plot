@@ -4,7 +4,7 @@ Project: `time-plot` (`/home/myles/time-plot`)
 
 Goal:
 
-- Build a plugin-based time-series plotting CLI that parses CSV files, supports expressions, aligns datasets on a common x-grid, and outputs self-contained offline HTML plots using Dygraphs.
+- Build a plugin-based time-series plotting CLI that parses CSV files, supports expressions, aligns datasets on a common x-grid, and outputs self-contained offline HTML plots using uPlot.
 
 **What Was Implemented**
 
@@ -57,12 +57,12 @@ Goal:
 
 7. Plotting / HTML output
 
-- Dygraphs HTML output supports multi-trace plotting.
+- uPlot HTML output supports multi-trace plotting.
 - Dual y-axis support (up to 2 y-axis types).
 - HTML is self-contained and offline:
-  - Dygraphs JS/CSS vendored and embedded inline
+  - uPlot JS/CSS vendored and embedded inline
   - no CDN dependency
-- SVG fallback renderer remains in place if Dygraphs is unavailable.
+- SVG fallback renderer remains in place if uPlot is unavailable.
 
 8. Build/sync tooling
 

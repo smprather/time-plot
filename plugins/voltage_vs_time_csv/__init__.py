@@ -63,7 +63,7 @@ def parse(file_path: Path) -> SeriesData:
     return SeriesData(
         source_name="Voltage vs. Time CSV",
         x_label="Time",
-        y_label="Voltage",
+        y_label=file_path.stem,
         x_unit="s",
         y_unit="v",
         x=np.asarray(times, dtype=np.float64),

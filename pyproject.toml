@@ -1,13 +1,13 @@
 [project]
 name = "time-plot"
 version = "0.1.0"
-description = "Plot generic time-series data using DyGraph."
+description = "Plot generic time-series data using uPlot."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "click",
-    "dygraph>=0.0.12",
     "numpy",
+    "uplot-python>=1.0.0",
 ]
 
 [project.scripts]

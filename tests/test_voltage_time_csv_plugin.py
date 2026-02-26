@@ -43,7 +43,7 @@ def test_parse_returns_base_units_and_converts_values(tmp_path: Path) -> None:
     assert series.x_unit == "s"
     assert series.y_unit == "v"
     assert series.x_label == "Time"
-    assert series.y_label == "Voltage"
+    assert series.y_label == "scaled"
     np.testing.assert_allclose(series.x, np.asarray([0.0, 1e-6]))
     np.testing.assert_allclose(series.y, np.asarray([0.0, 1.0]))
 

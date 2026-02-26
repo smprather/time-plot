@@ -10,15 +10,15 @@ Guidance for coding agents working in this repository.
 
 - Project: `time-plot`
 - Script name: `time_plot`
-- Purpose: plot time-series data (non-calendar time on x-axis) using embedded `Dygraphs` JavaScript in generated HTML.
+- Purpose: plot time-series data (non-calendar time on x-axis) using embedded `uPlot` JavaScript in generated HTML.
 - Runtime: Python (`>=3.14`) managed with `uv`
 
 ## Terminology
 
-- `Dygraphs` (plural): the browser plotting library used in generated HTML.
-- `dygraph` / `DyGraph`: Python package names in `pyproject.toml` / environment. Do not assume this is the browser plotting library.
+- `uPlot`: the browser plotting library used in generated HTML. JS/CSS assets are sourced from the `uplot-python` pip package.
+- `uplot-python`: Python package providing uPlot static assets. We use only the bundled JS/CSS, not the Python plotting API.
 - `data set`: one named y-series over time.
-- `y-axis type`: defined as the tuple `(y_label, y_unit)`.
+- `y-axis type`: defined by `y_unit` alone. The label is cosmetic; only the unit determines axis grouping.
 
 ## Current Implemented Features
 
@@ -52,8 +52,8 @@ Guidance for coding agents working in this repository.
   - multiple traces
   - dual y-axis support (up to two y-axis data types)
   - SI unit auto-scaling for display
-  - vendored `Dygraphs` JS/CSS embedded inline for offline HTML; CDN `<script>`/`<link>` tags used when vendor files are missing
-  - client-side SVG fallback: a JS function renders an SVG chart when `window.Dygraph` is not available (still requires a JS-capable browser)
+  - `uPlot` JS/CSS inlined from `uplot-python` package for self-contained offline HTML
+  - mousewheel zoom plugin (`uPlot.mousewheel.js`) included for scroll-to-zoom
 
 ## Known Limitations (Current)
 
@@ -94,7 +94,7 @@ Guidance for coding agents working in this repository.
   - first line must have column names `time(...)` and `voltage(...)`
   - ignore parenthetical units when checking support
   - Example recognized header: `time(ns),voltage(v)`
-- y-axis label returned by the plugin: `Voltage`
+- y-axis label returned by the plugin is the name of the file without the .csv extension.
 
 ## Example Data Utility Requirements
 
@@ -151,8 +151,8 @@ Guidance for coding agents working in this repository.
 
 - x-axis is always time and always stored internally in seconds.
 - x-axis label is always `Time (<display units>)`.
-- y-axis type is `(y_label, y_unit)`.
-- At most two distinct y-axis types may be present in one plot.
+- y-axis type is determined by `y_unit` alone.
+- At most two distinct y-axis units may be present in one plot.
 - Legend names may collide.
   - Plot output may deduplicate labels for display (for example `Voltage [2]`).
 
@@ -192,7 +192,7 @@ Guidance for coding agents working in this repository.
 
 ## Plotting Rules
 
-- When two y-axis types are present, use `Dygraphs` dual y-axis support.
+- When two y-axis types are present, use `uPlot` dual y-axis support.
 - Legend naming precedence (highest to lowest):
   1. CLI name (`<name>:`)
   1. Parser plugin-provided y label
@@ -243,7 +243,6 @@ Guidance for coding agents working in this repository.
 - `uv.lock`: locked dependency versions
 - `time_plot/`: application package
 - `plugins/`: parser plugins
-- `vendor/`: vendored Dygraphs JS/CSS for offline HTML output
 - `sample_data/`: generated example CSV files
 - `scripts/`: developer utility scripts
 - `tests/`: automated tests
@@ -281,7 +280,7 @@ Guidance for coding agents working in this repository.
 ## Tech Stack
 
 - Python >= 3.14
-- `Dygraphs` (embedded JS assets in generated HTML)
+- `uPlot` via `uplot-python` (embedded JS assets in generated HTML)
 - Click CLI
 - Pytest
 - Astral Ruff

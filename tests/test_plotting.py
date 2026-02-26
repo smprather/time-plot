@@ -4,11 +4,11 @@ from pathlib import Path
 
 import numpy as np
 
-from time_plot.plotting import write_multi_dygraphs_html
+from time_plot.plotting import write_multi_html
 from time_plot.processing import AlignedPlotData, AlignedTrace
 
 
-def test_write_multi_dygraphs_html_assigns_secondary_axis_for_second_y_type(tmp_path: Path) -> None:
+def test_write_multi_html_assigns_secondary_axis_for_second_y_unit(tmp_path: Path) -> None:
     plot_data = AlignedPlotData(
         x_seconds=np.asarray([0.0, 1e-6, 2e-6]),
         traces=[
@@ -31,8 +31,8 @@ def test_write_multi_dygraphs_html_assigns_secondary_axis_for_second_y_type(tmp_
         ],
     )
     out = tmp_path / "dual.html"
-    write_multi_dygraphs_html(plot_data, out, title="dual")
+    write_multi_html(plot_data, out, title="dual")
 
     text = out.read_text(encoding="utf-8")
-    assert 'const y2label = "Rate (' in text
-    assert '"Rate": {"axis": "y2"}' in text
+    assert '"scale": "y2"' in text
+    assert "v/s" in text

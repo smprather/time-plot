@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import click
 
-from time_plot.plotting import write_multi_dygraphs_html
+from time_plot.plotting import write_multi_html
 from time_plot.processing import (
     ExpressionSpec,
     InputFileSpec,
@@ -74,7 +74,7 @@ def cli() -> None:
     help="Directory containing parser plugins (.py files).",
 )
 def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path | None) -> None:
-    """Parse a data file with the first matching plugin and write a Dygraphs HTML plot."""
+    """Parse a data file with the first matching plugin and write an HTML plot."""
 
     if not sources:
         source_specs = [CliSourceSpec(name=None, raw=str(_default_sample_path()), kind="file")]
@@ -133,7 +133,7 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
     )
     title_parts = [dataset.legend_name for dataset in loaded] + [expr.legend_name for expr in expression_specs]
     title = loaded[0].series.source_name if len(title_parts) == 1 and loaded else ", ".join(title_parts)
-    written = write_multi_dygraphs_html(aligned, final_output, title=title)
+    written = write_multi_html(aligned, final_output, title=title)
 
     for dataset in loaded:
         click.echo(f"Plugin: {dataset.plugin_name}")

@@ -110,9 +110,9 @@ def align_loaded_datasets(datasets: list[LoadedDataset]) -> AlignedPlotData:
             ),
         )
 
-    y_types = {(trace.y_label, trace.y_unit) for trace in traces}
-    if len(y_types) > 2:
-        msg = "At most two distinct y-axis types are supported."
+    y_units = {trace.y_unit for trace in traces}
+    if len(y_units) > 2:
+        msg = "At most two distinct y-axis units are supported."
         raise ValueError(msg)
 
     return AlignedPlotData(
