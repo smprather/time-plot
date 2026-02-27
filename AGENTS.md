@@ -26,6 +26,9 @@ Guidance for coding agents working in this repository.
 - Seed parser plugin:
   - Plugin ID: `voltage-vs-time-csv`
   - Package directory: `plugins/voltage_vs_time_csv`
+- SPICE PWL parser plugin:
+  - Plugin ID: `spice-pwl`
+  - Package directory: `plugins/spice_pwl`
 - Example data generation:
   - `sample_data/sine.csv`
   - `sample_data/cosine.csv`
@@ -96,6 +99,21 @@ Guidance for coding agents working in this repository.
   - Example recognized header: `time(ns),voltage(v)`
 - y-axis label returned by the plugin is the name of the file without the .csv extension.
 
+## SPICE PWL Plugin
+
+- Format name: `SPICE PWL`
+- Plugin ID: `spice-pwl`
+- Plugin package directory: `plugins/spice_pwl`
+- Parses SPICE netlists containing PWL (piecewise-linear) voltage or current sources.
+- Recognition rule:
+  - First non-comment (`*`), non-empty line must start with `i` or `v` (case-insensitive).
+  - That line, whitespace-split, must contain `pwl` (substring match) at position index >= 3.
+- Line continuations: lines starting with `+` are appended to the previous logical line before parsing.
+- Source type determines y-unit: `v` prefix → y_unit `v`, `i` prefix → y_unit `i`.
+- PWL values are time-value pairs with SPICE numeric suffixes (`n`=1e-9, `m`=1e-3, `u`=1e-6, `k`=1e3, `meg`=1e6, etc.).
+- Time values are converted to seconds; y values are stored in base units.
+- Each PWL source in the file produces one `SeriesData` with `name` set to the SPICE source name (e.g., `i1`).
+
 ## Example Data Utility Requirements
 
 - Used for development and test writing.
@@ -119,9 +137,11 @@ Guidance for coding agents working in this repository.
 - Plugin identification is attempted in deterministic order.
   - Current rule: sorted by plugin package/file name.
 - The first matching plugin is used.
-- If a plugin supports a file, it must return data equivalent to:
-  - acknowledgement of support (implicitly via successful parse)
-  - y base unit with no SI prefix (trusted convention)
+- `parse()` receives `(file_path, options)` where `options` is `dict[str, str]` from the CLI `--parser-options` flag, and returns `list[SeriesData]`. Single-dataset plugins return a one-element list.
+- If a plugin supports a file, each `SeriesData` must provide:
+  - `name`: a per-dataset identifier (required). For multi-series returns, used to build the dataset key (e.g., `f1_voltage` instead of `f1_1`) and as the default legend name.
+  - `y_unit`: short unit code with no SI prefix (e.g., `"v"`, `"i"`) — used for axis grouping and SI scaling.
+  - `y_unit_label`: long-form unit name (e.g., `"Voltage"`, `"Current"`) — used for y-axis display labels.
   - x values converted to seconds
   - `float64` numpy arrays for x and y in base units
   - literal y-axis label
@@ -193,9 +213,12 @@ Guidance for coding agents working in this repository.
 ## Plotting Rules
 
 - When two y-axis types are present, use `uPlot` dual y-axis support.
+- Y-axis labels: `"LongUnit (SI_prefix + ShortUnit)"` — e.g., `"Voltage (mv)"`, `"Current (mi)"`.
+- Summary table column headers include `(SI_prefix + ShortUnit)` when all traces share a single y-unit — e.g., `"Average (mv)"`.
+  - When multiple y-units are present, headers omit the unit and values include inline units instead.
 - Legend naming precedence (highest to lowest):
   1. CLI name (`<name>:`)
-  1. Parser plugin-provided y label
+  1. Parser plugin-provided `SeriesData.name`
   1. Basename of the input file without extension
   1. Expression text with spaces removed
 - SI display scaling must be auto-selected for readability.

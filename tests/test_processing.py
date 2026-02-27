@@ -24,13 +24,16 @@ def _loaded(
     y: list[float],
     y_label: str = "Voltage",
     y_unit: str = "v",
+    y_unit_label: str = "Voltage",
 ) -> LoadedDataset:
     series = SeriesData(
         source_name="Test Source",
+        name="dummy",
         x_label="Time",
         y_label=y_label,
         x_unit="s",
         y_unit=y_unit,
+        y_unit_label=y_unit_label,
         x=np.asarray(x, dtype=np.float64),
         y=np.asarray(y, dtype=np.float64),
     )
@@ -174,16 +177,18 @@ def test_load_input_files_rejects_duplicate_dataset_names(tmp_path: Path) -> Non
             return True
 
         @staticmethod
-        def parse(_path: Path) -> SeriesData:
-            return SeriesData(
+        def parse(_path: Path, _options: dict[str, str] | None = None) -> list[SeriesData]:
+            return [SeriesData(
                 source_name="Dummy",
+                name="dummy",
                 x_label="Time",
                 y_label="Voltage",
                 x_unit="s",
                 y_unit="v",
+                y_unit_label="Voltage",
                 x=np.asarray([0.0, 1.0]),
                 y=np.asarray([0.0, 1.0]),
-            )
+            )]
 
     specs = [
         InputFileSpec(arg_position=1, path=csv_path, dataset_name="dup", cli_name="a"),

@@ -34,6 +34,7 @@ class AlignedTrace:
     source_name: str
     y_label: str
     y_unit: str
+    y_unit_label: str
     y: np.ndarray
     y_display_prefix: str | None = None
 
@@ -57,27 +58,33 @@ class ExpressionSpec:
 def load_input_files(
     input_files: list[InputFileSpec],
     plugins: list[ParserPlugin],
+    parser_options: dict[str, str] | None = None,
 ) -> list[LoadedDataset]:
     loaded: list[LoadedDataset] = []
+    opts = parser_options or {}
     seen_dataset_names: set[str] = set()
     for spec in input_files:
-        if spec.dataset_name in seen_dataset_names:
-            msg = f"Duplicate dataset name: {spec.dataset_name}"
-            raise ValueError(msg)
-        seen_dataset_names.add(spec.dataset_name)
         plugin = select_plugin(spec.path, plugins)
-        series = plugin.parse(spec.path)
-        dataset_name = spec.dataset_name
-        legend_name = _legend_name(spec, series)
-        loaded.append(
-            LoadedDataset(
-                dataset_name=dataset_name,
-                legend_name=legend_name,
-                source_path=spec.path,
-                plugin_name=plugin.plugin_name,
-                series=series,
-            ),
-        )
+        series_list = plugin.parse(spec.path, opts)
+        for series in series_list:
+            if len(series_list) == 1:
+                dataset_name = spec.dataset_name
+            else:
+                dataset_name = f"{spec.dataset_name}_{series.name}"
+            if dataset_name in seen_dataset_names:
+                msg = f"Duplicate dataset name: {dataset_name}"
+                raise ValueError(msg)
+            seen_dataset_names.add(dataset_name)
+            legend_name = _legend_name(spec, series)
+            loaded.append(
+                LoadedDataset(
+                    dataset_name=dataset_name,
+                    legend_name=legend_name,
+                    source_path=spec.path,
+                    plugin_name=plugin.plugin_name,
+                    series=series,
+                ),
+            )
     return loaded
 
 
@@ -105,6 +112,7 @@ def align_loaded_datasets(datasets: list[LoadedDataset]) -> AlignedPlotData:
                 source_name=dataset.series.source_name,
                 y_label=dataset.series.y_label,
                 y_unit=dataset.series.y_unit,
+                y_unit_label=dataset.series.y_unit_label,
                 y=y_grid,
                 y_display_prefix=dataset.series.y_display_prefix,
             ),
@@ -170,6 +178,7 @@ def evaluate_expressions(
             source_name=f"expr[{expr.expression_text}]",
             y_label=result_meta.y_label,
             y_unit=result_meta.y_unit,
+            y_unit_label=result_meta.y_unit_label,
             y=result_values,
             y_display_prefix=None,
         )
@@ -196,8 +205,8 @@ def combine_plot_data(
 def _legend_name(spec: InputFileSpec, series: SeriesData) -> str:
     if spec.cli_name:
         return spec.cli_name
-    if series.y_label:
-        return series.y_label
+    if series.name:
+        return series.name
     if spec.path.name:
         return spec.path.stem
     return spec.dataset_name
@@ -276,6 +285,7 @@ class _ExprValue:
     finite_mask: np.ndarray
     y_label: str
     y_unit: str
+    y_unit_label: str
 
 
 def _validate_expression_names(
@@ -363,6 +373,7 @@ def _eval_expression(
         finite_mask=value.finite_mask,
         y_label=value.y_label,
         y_unit=value.y_unit,
+        y_unit_label=value.y_unit_label,
     )
 
 
@@ -384,6 +395,7 @@ def _eval_expr_node(
             finite_mask=finite,
             y_label=trace.y_label,
             y_unit=trace.y_unit,
+            y_unit_label=trace.y_unit_label,
         )
 
     if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
@@ -393,12 +405,13 @@ def _eval_expr_node(
             finite_mask=np.ones_like(arr, dtype=bool),
             y_label="Expression",
             y_unit="1",
+            y_unit_label="1",
         )
 
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
         inner = _eval_expr_node(node.operand, x_seconds, values_by_name, trace_meta_by_name)
         values = inner.values if isinstance(node.op, ast.UAdd) else -inner.values
-        return _ExprValue(values=values, finite_mask=inner.finite_mask.copy(), y_label=inner.y_label, y_unit=inner.y_unit)
+        return _ExprValue(values=values, finite_mask=inner.finite_mask.copy(), y_label=inner.y_label, y_unit=inner.y_unit, y_unit_label=inner.y_unit_label)
 
     if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
         left = _eval_expr_node(node.left, x_seconds, values_by_name, trace_meta_by_name)
@@ -412,23 +425,27 @@ def _eval_expr_node(
                 msg = f"Cannot add datasets with different units: {left.y_unit} and {right.y_unit}"
                 raise ValueError(msg)
             values = left_v + right_v
-            y_label, y_unit = left.y_label, left.y_unit
+            y_label, y_unit, y_unit_label = left.y_label, left.y_unit, left.y_unit_label
         elif isinstance(node.op, ast.Sub):
             if left.y_unit != right.y_unit:
                 msg = f"Cannot subtract datasets with different units: {left.y_unit} and {right.y_unit}"
                 raise ValueError(msg)
             values = left_v - right_v
-            y_label, y_unit = left.y_label, left.y_unit
+            y_label, y_unit, y_unit_label = left.y_label, left.y_unit, left.y_unit_label
         elif isinstance(node.op, ast.Mult):
             values = left_v * right_v
-            y_label, y_unit = "Expression", _combine_units_mul(left.y_unit, right.y_unit)
+            y_unit = _combine_units_mul(left.y_unit, right.y_unit)
+            y_label = "Expression"
+            y_unit_label = _derive_unit_label(y_unit, left, right)
         else:
             with np.errstate(divide="ignore", invalid="ignore"):
                 values = left_v / right_v
             mask = mask & np.isfinite(values)
-            y_label, y_unit = "Expression", _combine_units_div(left.y_unit, right.y_unit)
+            y_unit = _combine_units_div(left.y_unit, right.y_unit)
+            y_label = "Expression"
+            y_unit_label = _derive_unit_label(y_unit, left, right)
         values[~mask] = np.nan
-        return _ExprValue(values=values, finite_mask=mask, y_label=y_label, y_unit=y_unit)
+        return _ExprValue(values=values, finite_mask=mask, y_label=y_label, y_unit=y_unit, y_unit_label=y_unit_label)
 
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         fn_name = node.func.id
@@ -441,20 +458,21 @@ def _eval_expr_node(
             mean_val = float(np.mean(finite_vals)) if finite_vals.size else np.nan
             values = np.full_like(x_seconds, np.nan, dtype=np.float64)
             values[arg.finite_mask] = mean_val
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit)
+            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit, y_unit_label=arg.y_unit_label)
         if fn_name == "rms":
             finite_vals = arg.values[arg.finite_mask]
             rms_val = float(np.sqrt(np.mean(finite_vals**2))) if finite_vals.size else np.nan
             values = np.full_like(x_seconds, np.nan, dtype=np.float64)
             values[arg.finite_mask] = rms_val
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit)
+            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit, y_unit_label=arg.y_unit_label)
         if fn_name == "abs":
             values = np.full_like(x_seconds, np.nan, dtype=np.float64)
             values[arg.finite_mask] = np.abs(arg.values[arg.finite_mask])
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit)
+            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit, y_unit_label=arg.y_unit_label)
         if fn_name == "ddt":
+            ddt_unit = _ddt_unit(arg.y_unit)
             values, mask = _ddt(arg.values, arg.finite_mask, x_seconds)
-            return _ExprValue(values=values, finite_mask=mask, y_label=arg.y_label, y_unit=_ddt_unit(arg.y_unit))
+            return _ExprValue(values=values, finite_mask=mask, y_label=arg.y_label, y_unit=ddt_unit, y_unit_label=ddt_unit)
         msg = f"Unsupported function in expression: {fn_name}"
         raise ValueError(msg)
 
@@ -484,6 +502,19 @@ def _ddt_unit(unit: str) -> str:
     if unit in {"", "1"}:
         return "1/s"
     return f"{unit}/s"
+
+
+def _derive_unit_label(result_unit: str, left: _ExprValue, right: _ExprValue) -> str:
+    """Pick the best y_unit_label for a composed unit.
+
+    If the result unit matches one of the operand units, reuse that operand's
+    label (e.g. ``v * 1 → "Voltage"``).  Otherwise fall back to the unit string.
+    """
+    if result_unit == left.y_unit:
+        return left.y_unit_label
+    if result_unit == right.y_unit:
+        return right.y_unit_label
+    return result_unit
 
 
 def _combine_units_mul(left: str, right: str) -> str:

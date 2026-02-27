@@ -10,10 +10,12 @@ from time_plot.units import scale_for_display
 @dataclass(slots=True)
 class SeriesData:
     source_name: str
+    name: str
     x_label: str
     y_label: str
     x_unit: str
     y_unit: str
+    y_unit_label: str
     x: np.ndarray
     y: np.ndarray
     x_display_prefix: str | None = None

@@ -41,6 +41,7 @@ def write_html(series: SeriesData, output_path: Path) -> Path:
         source_name=series.source_name,
         y_label=series.y_label,
         y_unit=series.y_unit,
+        y_unit_label=series.y_unit_label,
         y=series.y,
         y_display_prefix=series.y_display_prefix,
     )
@@ -74,13 +75,15 @@ def write_multi_html(
         raise ValueError(msg)
 
     y_unit_scalers: dict[str, tuple[float, str]] = {}
+    y_unit_labels: dict[str, str] = {}
     for unit in y_unit_order:
-        traces = [trace for trace in plot_data.traces if trace.y_unit == unit]
-        values = np.concatenate([trace.y[np.isfinite(trace.y)] for trace in traces]) if traces else np.array([], dtype=np.float64)
-        forced_prefixes = {trace.y_display_prefix for trace in traces if trace.y_display_prefix is not None}
+        unit_traces = [trace for trace in plot_data.traces if trace.y_unit == unit]
+        values = np.concatenate([trace.y[np.isfinite(trace.y)] for trace in unit_traces]) if unit_traces else np.array([], dtype=np.float64)
+        forced_prefixes = {trace.y_display_prefix for trace in unit_traces if trace.y_display_prefix is not None}
         forced_prefix = next(iter(forced_prefixes)) if len(forced_prefixes) == 1 else None
         scaled = scale_for_display(values if values.size else np.asarray([0.0]), base_unit=unit, forced_prefix=forced_prefix)
         y_unit_scalers[unit] = (scaled.factor, scaled.display_unit)
+        y_unit_labels[unit] = unit_traces[0].y_unit_label if unit_traces else unit
 
     # Build columnar data: [[x_vals], [y1_vals], [y2_vals], ...]
     x_col: list[float | None] = [float(v) for v in x_scaled.scaled_values.tolist()]
@@ -96,7 +99,7 @@ def write_multi_html(
         columns.append(col)
 
     # Build uPlot series config: index 0 = x placeholder
-    series_configs: list[dict] = [{}]
+    series_configs: list[dict] = [{"label": "Time"}]
     first_unit = y_unit_order[0]
     secondary_unit = y_unit_order[1] if len(y_unit_order) > 1 else None
 
@@ -112,13 +115,51 @@ def write_multi_html(
 
     # Build axes config
     _, y_display_1 = y_unit_scalers[first_unit]
+    y_axis_label_1 = f"{y_unit_labels[first_unit]} ({y_display_1})"
     axes_configs: list[dict] = [
         {"label": x_axis_label},
-        {"label": y_display_1},
+        {"label": y_axis_label_1},
     ]
     if secondary_unit:
         _, y_display_2 = y_unit_scalers[secondary_unit]
-        axes_configs.append({"label": y_display_2, "side": 1, "scale": "y2"})
+        y_axis_label_2 = f"{y_unit_labels[secondary_unit]} ({y_display_2})"
+        axes_configs.append({"label": y_axis_label_2, "side": 1, "scale": "y2"})
+
+    single_y_unit = len(y_unit_order) == 1
+    if single_y_unit:
+        _, header_display_unit = y_unit_scalers[first_unit]
+        table_headers = {
+            "peak_abs": f"Peak |y| ({header_display_unit})",
+            "average": f"Average ({header_display_unit})",
+            "rms": f"RMS ({header_display_unit})",
+        }
+    else:
+        table_headers = {
+            "peak_abs": "Peak |y|",
+            "average": "Average",
+            "rms": "RMS",
+        }
+
+    summary_rows: list[dict[str, str]] = []
+    for i, trace in enumerate(plot_data.traces):
+        finite = trace.y[np.isfinite(trace.y)]
+        if finite.size:
+            peak_abs = float(np.max(np.abs(finite)))
+            average = float(np.mean(finite))
+            rms_val = float(np.sqrt(np.mean(finite**2)))
+        else:
+            peak_abs = average = rms_val = float("nan")
+        factor, display_unit = y_unit_scalers[trace.y_unit]
+        if single_y_unit:
+            fmt = lambda v, f=factor: f"{v / f:.4g}"
+        else:
+            fmt = lambda v, f=factor, u=display_unit: f"{v / f:.4g} {u}"
+        summary_rows.append({
+            "label": legend_names[i],
+            "peak_abs": fmt(peak_abs),
+            "average": fmt(average),
+            "rms": fmt(rms_val),
+        })
 
     html_text = _render_multi_html(
         title=title,
@@ -126,6 +167,8 @@ def write_multi_html(
         columns=columns,
         series_configs=series_configs,
         axes_configs=axes_configs,
+        summary_rows=summary_rows,
+        table_headers=table_headers,
     )
     output_path.write_text(html_text, encoding="utf-8")
     return output_path
@@ -138,6 +181,8 @@ def _render_multi_html(
     columns: list[list[float | None]],
     series_configs: list[dict],
     axes_configs: list[dict],
+    summary_rows: list[dict[str, str]],
+    table_headers: dict[str, str],
 ) -> str:
     columns_json = json.dumps(columns)
     series_json = json.dumps(series_configs)
@@ -145,6 +190,17 @@ def _render_multi_html(
     title_json = json.dumps(title)
     safe_title = html.escape(title)
     safe_source_name = html.escape(source_name)
+
+    table_rows = ""
+    for row in summary_rows:
+        table_rows += (
+            f"        <tr>"
+            f"<td>{html.escape(row['label'])}</td>"
+            f"<td>{html.escape(row['peak_abs'])}</td>"
+            f"<td>{html.escape(row['average'])}</td>"
+            f"<td>{html.escape(row['rms'])}</td>"
+            f"</tr>\n"
+        )
 
     uplot_css, uplot_js, mousewheel_js = _uplot_inline_assets()
     # Escape </script> in inlined JS to avoid breaking the HTML parser
@@ -188,6 +244,29 @@ def _render_multi_html(
       color: #444;
       font-size: 14px;
     }}
+    .u-legend {{
+      display: flex;
+      flex-direction: column;
+      text-align: left;
+    }}
+    .summary {{
+      margin: 16px 0 0 0;
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 14px;
+    }}
+    .summary th, .summary td {{
+      border: 1px solid #ddd;
+      padding: 6px 12px;
+      text-align: right;
+    }}
+    .summary th {{
+      background: #f7f7f2;
+      font-weight: 600;
+    }}
+    .summary td:first-child, .summary th:first-child {{
+      text-align: left;
+    }}
   </style>
 </head>
 <body>
@@ -195,6 +274,13 @@ def _render_multi_html(
       <div class="card">
       <p class="meta">Source: {safe_source_name}</p>
       <div id="plot" aria-label="Time series plot"></div>
+      <table class="summary">
+        <thead>
+          <tr><th>Label</th><th>{html.escape(table_headers["peak_abs"])}</th><th>{html.escape(table_headers["average"])}</th><th>{html.escape(table_headers["rms"])}</th></tr>
+        </thead>
+        <tbody>
+{table_rows}        </tbody>
+      </table>
     </div>
   </div>
   <script>

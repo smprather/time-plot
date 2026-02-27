@@ -38,12 +38,14 @@ def test_parse_returns_base_units_and_converts_values(tmp_path: Path) -> None:
     )
 
     plugin = _plugin()
-    series = plugin.parse(csv_path)
+    [series] = plugin.parse(csv_path, {})
 
     assert series.x_unit == "s"
     assert series.y_unit == "v"
+    assert series.y_unit_label == "Voltage"
     assert series.x_label == "Time"
     assert series.y_label == "scaled"
+    assert series.name == "scaled"
     np.testing.assert_allclose(series.x, np.asarray([0.0, 1e-6]))
     np.testing.assert_allclose(series.y, np.asarray([0.0, 1.0]))
 

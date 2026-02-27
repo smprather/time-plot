@@ -37,7 +37,7 @@ def identify(file_path: Path) -> bool:
     return [normalized_header_name(col) for col in columns] == ["time", "voltage"]
 
 
-def parse(file_path: Path) -> SeriesData:
+def parse(file_path: Path, options: dict[str, str] | None = None) -> list[SeriesData]:
     times: list[float] = []
     voltages: list[float] = []
 
@@ -60,14 +60,16 @@ def parse(file_path: Path) -> SeriesData:
             times.append(float(row[x_field]) * x_factor)
             voltages.append(float(row[y_field]) * y_factor)
 
-    return SeriesData(
+    return [SeriesData(
         source_name="Voltage vs. Time CSV",
+        name=file_path.stem,
         x_label="Time",
         y_label=file_path.stem,
         x_unit="s",
         y_unit="v",
+        y_unit_label="Voltage",
         x=np.asarray(times, dtype=np.float64),
         y=np.asarray(voltages, dtype=np.float64),
         x_display_prefix=None,
         y_display_prefix=None,
-    )
+    )]

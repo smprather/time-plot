@@ -11,7 +11,7 @@ from time_plot.models import SeriesData
 
 
 IdentifyFn = Callable[[Path], bool]
-ParseFn = Callable[[Path], SeriesData]
+ParseFn = Callable[[Path, dict[str, str]], list[SeriesData]]
 
 
 @dataclass(slots=True)
@@ -82,7 +82,7 @@ def _plugin_from_module(module: ModuleType, path: Path) -> ParserPlugin:
         msg = "missing callable identify(path) -> bool"
         raise TypeError(msg)
     if not callable(parse):
-        msg = "missing callable parse(path) -> SeriesData"
+        msg = "missing callable parse(path, options) -> list[SeriesData]"
         raise TypeError(msg)
     if callable(plugin_name_fn):
         plugin_name = str(plugin_name_fn())

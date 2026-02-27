@@ -18,6 +18,7 @@ def test_write_multi_html_assigns_secondary_axis_for_second_y_unit(tmp_path: Pat
                 source_name="voltage",
                 y_label="Voltage",
                 y_unit="v",
+                y_unit_label="Voltage",
                 y=np.asarray([0.0, 1.0, 0.0]),
             ),
             AlignedTrace(
@@ -26,6 +27,7 @@ def test_write_multi_html_assigns_secondary_axis_for_second_y_unit(tmp_path: Pat
                 source_name="rate",
                 y_label="Rate",
                 y_unit="v/s",
+                y_unit_label="v/s",
                 y=np.asarray([1.0, 2.0, 3.0]),
             ),
         ],

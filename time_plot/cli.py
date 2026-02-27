@@ -73,7 +73,14 @@ def cli() -> None:
     default=None,
     help="Directory containing parser plugins (.py files).",
 )
-def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path | None) -> None:
+@click.option(
+    "--parser-options",
+    "parser_options_raw",
+    type=str,
+    default=None,
+    help="Comma-separated key=value pairs passed to parser plugins.",
+)
+def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path | None, parser_options_raw: str | None) -> None:
     """Parse a data file with the first matching plugin and write an HTML plot."""
 
     if not sources:
@@ -113,13 +120,21 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
             ),
         )
 
+    parser_options: dict[str, str] = {}
+    if parser_options_raw:
+        for pair in parser_options_raw.split(","):
+            if "=" not in pair:
+                raise click.ClickException(f"Invalid parser option (missing '='): {pair}")
+            key, value = pair.split("=", 1)
+            parser_options[key.strip()] = value.strip()
+
     plugin_dir = plugins_dir or _default_plugins_dir()
     plugins = discover_plugins(plugin_dir)
     if not plugins:
         raise click.ClickException(f"No plugins found in {plugin_dir}")
 
     try:
-        loaded = load_input_files(file_specs, plugins)
+        loaded = load_input_files(file_specs, plugins, parser_options=parser_options)
         aligned_files = align_loaded_datasets(loaded)
         expr_traces = evaluate_expressions(aligned_files, expression_specs)
         aligned = combine_plot_data(aligned_files, expr_traces)
