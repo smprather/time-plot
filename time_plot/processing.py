@@ -32,6 +32,7 @@ class AlignedTrace:
     dataset_name: str
     legend_name: str
     source_name: str
+    source_path: Path | None
     y_label: str
     y_unit: str
     y_unit_label: str
@@ -110,6 +111,7 @@ def align_loaded_datasets(datasets: list[LoadedDataset]) -> AlignedPlotData:
                 dataset_name=dataset.dataset_name,
                 legend_name=dataset.legend_name,
                 source_name=dataset.series.source_name,
+                source_path=dataset.source_path,
                 y_label=dataset.series.y_label,
                 y_unit=dataset.series.y_unit,
                 y_unit_label=dataset.series.y_unit_label,
@@ -176,6 +178,7 @@ def evaluate_expressions(
             dataset_name=expr.dataset_name,
             legend_name=expr.legend_name,
             source_name=f"expr[{expr.expression_text}]",
+            source_path=None,
             y_label=result_meta.y_label,
             y_unit=result_meta.y_unit,
             y_unit_label=result_meta.y_unit_label,

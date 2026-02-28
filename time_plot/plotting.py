@@ -39,6 +39,7 @@ def write_html(series: SeriesData, output_path: Path) -> Path:
         dataset_name="f1",
         legend_name=series.y_label,
         source_name=series.source_name,
+        source_path=None,
         y_label=series.y_label,
         y_unit=series.y_unit,
         y_unit_label=series.y_unit_label,
@@ -161,6 +162,11 @@ def write_multi_html(
             "rms": fmt(rms_val),
         })
 
+    source_rows: list[dict[str, str]] = []
+    for i, trace in enumerate(plot_data.traces):
+        source = str(trace.source_path) if trace.source_path is not None else trace.source_name
+        source_rows.append({"label": legend_names[i], "source": source})
+
     html_text = _render_multi_html(
         title=title,
         source_name=title,
@@ -169,6 +175,7 @@ def write_multi_html(
         axes_configs=axes_configs,
         summary_rows=summary_rows,
         table_headers=table_headers,
+        source_rows=source_rows,
     )
     output_path.write_text(html_text, encoding="utf-8")
     return output_path
@@ -183,6 +190,7 @@ def _render_multi_html(
     axes_configs: list[dict],
     summary_rows: list[dict[str, str]],
     table_headers: dict[str, str],
+    source_rows: list[dict[str, str]],
 ) -> str:
     columns_json = json.dumps(columns)
     series_json = json.dumps(series_configs)
@@ -199,6 +207,15 @@ def _render_multi_html(
             f"<td>{html.escape(row['peak_abs'])}</td>"
             f"<td>{html.escape(row['average'])}</td>"
             f"<td>{html.escape(row['rms'])}</td>"
+            f"</tr>\n"
+        )
+
+    source_table_rows = ""
+    for row in source_rows:
+        source_table_rows += (
+            f"        <tr>"
+            f"<td>{html.escape(row['label'])}</td>"
+            f"<td>{html.escape(row['source'])}</td>"
             f"</tr>\n"
         )
 
@@ -281,6 +298,13 @@ def _render_multi_html(
         <tbody>
 {table_rows}        </tbody>
       </table>
+      <table class="summary">
+        <thead>
+          <tr><th>Label</th><th>Input File</th></tr>
+        </thead>
+        <tbody>
+{source_table_rows}        </tbody>
+      </table>
     </div>
   </div>
   <script>
@@ -298,7 +322,6 @@ def _render_multi_html(
       const rect = plotEl.getBoundingClientRect();
 
       const opts = {{
-        title: title,
         width: Math.floor(rect.width) || 900,
         height: 560,
         scales: {{
