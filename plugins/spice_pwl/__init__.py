@@ -47,8 +47,14 @@ def identify(file_path: Path) -> bool:
 def parse(file_path: Path, options: dict[str, str] | None = None) -> list[SeriesData]:
     raw_lines = file_path.read_text(encoding="utf-8").splitlines()
     logical_lines = _aggregate_continuations(raw_lines)
+    opts = options or {}
+    naming_method = opts.get("naming_method", "element_name")
+    if naming_method not in {"element_name", "positive_node_name"}:
+        msg = f"Invalid naming_method: {naming_method!r} (expected 'element_name' or 'positive_node_name')"
+        raise ValueError(msg)
 
     results: list[SeriesData] = []
+    source_types: set[str] = set()
     for line in logical_lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("*"):
@@ -66,9 +72,18 @@ def parse(file_path: Path, options: dict[str, str] | None = None) -> list[Series
         if pwl_idx is None:
             continue
 
-        source_name = tokens[0]
-        y_unit = "v" if first_char == "v" else "i"
-        y_unit_label = "Voltage" if first_char == "v" else "Current"
+        source_types.add(first_char)
+        if len(source_types) > 1:
+            msg = f"SPICE PWL file contains both voltage and current sources: {file_path}"
+            raise ValueError(msg)
+
+        element_name = tokens[0]
+        if naming_method == "positive_node_name":
+            data_set_name = tokens[1]
+        else:
+            data_set_name = element_name
+        y_unit = "v" if first_char == "v" else "a"
+        y_unit_label = "Volts" if first_char == "v" else "Amps"
 
         # Collect everything from the pwl token onward, strip the "pwl" keyword
         # and any parentheses, then split into flat value tokens.
@@ -78,7 +93,7 @@ def parse(file_path: Path, options: dict[str, str] | None = None) -> list[Series
         value_tokens = tail.split()
 
         if len(value_tokens) % 2 != 0:
-            msg = f"PWL source {source_name}: odd number of values (expected time-value pairs)"
+            msg = f"PWL source {element_name}: odd number of values (expected time-value pairs)"
             raise ValueError(msg)
 
         times: list[float] = []
@@ -90,9 +105,9 @@ def parse(file_path: Path, options: dict[str, str] | None = None) -> list[Series
         results.append(
             SeriesData(
                 source_name="SPICE PWL",
-                name=source_name,
+                name=data_set_name,
                 x_label="Time",
-                y_label=source_name,
+                y_label=data_set_name,
                 x_unit="s",
                 y_unit=y_unit,
                 y_unit_label=y_unit_label,

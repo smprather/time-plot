@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from time_plot.units import (
+    current_unit_to_amps_factor,
     normalized_header_name,
     parse_header_column,
     scale_for_display,
@@ -25,6 +26,9 @@ def test_unit_conversion_factors() -> None:
     assert time_unit_to_seconds_factor("s") == 1.0
     assert voltage_unit_to_volts_factor("mv") == 1e-3
     assert voltage_unit_to_volts_factor("v") == 1.0
+    assert current_unit_to_amps_factor("a") == 1.0
+    assert current_unit_to_amps_factor("ma") == 1e-3
+    assert current_unit_to_amps_factor("ua") == 1e-6
 
 
 def test_display_scaling_prefers_human_readable_units() -> None:

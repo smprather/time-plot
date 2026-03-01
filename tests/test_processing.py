@@ -191,8 +191,8 @@ def test_load_input_files_rejects_duplicate_dataset_names(tmp_path: Path) -> Non
             )]
 
     specs = [
-        InputFileSpec(arg_position=1, path=csv_path, dataset_name="dup", cli_name="a"),
-        InputFileSpec(arg_position=2, path=csv_path, dataset_name="dup", cli_name="b"),
+        InputFileSpec(arg_position=1, path=csv_path, data_source_name="dup", cli_name="a"),
+        InputFileSpec(arg_position=2, path=csv_path, data_source_name="dup", cli_name="b"),
     ]
     with pytest.raises(ValueError, match="Duplicate dataset name"):
         load_input_files(specs, [_DummyPlugin()])  # type: ignore[list-item]

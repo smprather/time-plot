@@ -96,6 +96,27 @@ def voltage_unit_to_volts_factor(unit: str | None) -> float:
     raise ValueError(msg)
 
 
+def current_unit_to_amps_factor(unit: str | None) -> float:
+    if unit is None:
+        msg = "Current column must include a unit in parentheses"
+        raise ValueError(msg)
+
+    normalized = unit.strip()
+    lowered = normalized.lower()
+    if lowered in {"a", "amp", "amps"}:
+        return 1.0
+
+    if normalized.endswith(("a", "A")):
+        prefix = normalized[:-1]
+        if prefix in SI_PREFIX_FACTORS:
+            return SI_PREFIX_FACTORS[prefix]
+        if prefix.lower() == "k":
+            return SI_PREFIX_FACTORS["k"]
+
+    msg = f"Unsupported current unit: {unit!r}"
+    raise ValueError(msg)
+
+
 def scale_for_display(
     values: np.ndarray,
     *,

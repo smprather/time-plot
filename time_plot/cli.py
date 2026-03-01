@@ -11,13 +11,12 @@ from time_plot.processing import (
     InputFileSpec,
     align_loaded_datasets,
     combine_plot_data,
-    default_dataset_name,
     evaluate_expressions,
     expression_legend_name,
     load_input_files,
 )
 from time_plot.plugin_system import discover_plugins
-from time_plot.sample_data import write_example_data_files, write_voltage_time_sample_csv
+from time_plot.example_data import write_example_data_files
 
 
 def _repo_root() -> Path:
@@ -28,8 +27,8 @@ def _default_plugins_dir() -> Path:
     return _repo_root() / "plugins"
 
 
-def _default_sample_path() -> Path:
-    return _repo_root() / "sample_data" / "sine.csv"
+def _default_example_path() -> Path:
+    return _repo_root() / "example_data" / "sine.csv"
 
 
 @dataclass(slots=True)
@@ -84,21 +83,29 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
     """Parse a data file with the first matching plugin and write an HTML plot."""
 
     if not sources:
-        source_specs = [CliSourceSpec(name=None, raw=str(_default_sample_path()), kind="file")]
+        source_specs = [CliSourceSpec(name=None, raw=str(_default_example_path()), kind="file")]
     else:
         source_specs = [parse_cli_source_spec(value) for value in sources]
 
     file_specs: list[InputFileSpec] = []
     expression_specs: list[ExpressionSpec] = []
+    seen_source_names: set[str] = set()
+    expr_counter = 0
     for position, source_spec in enumerate(source_specs, start=1):
-        dataset_name = source_spec.name or default_dataset_name(position)
         if source_spec.kind == "expr":
             expression_text = source_spec.raw[5:-1]
+            if source_spec.name:
+                if source_spec.name == "expr":
+                    raise click.ClickException("'expr' is a reserved data_source name and cannot be used.")
+                dataset_name = source_spec.name
+            else:
+                expr_counter += 1
+                dataset_name = f"e{expr_counter}"
             expression_specs.append(
                 ExpressionSpec(
                     arg_position=position,
                     dataset_name=dataset_name,
-                    legend_name=expression_legend_name(source_spec.name, expression_text),
+                    legend_name=expression_legend_name(dataset_name, expression_text),
                     expression_text=expression_text,
                 ),
             )
@@ -108,14 +115,32 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         if not source_file.exists():
             msg = (
                 f"Input file not found: {source_file}\n"
-                "Run `python main.py sample-files` to generate example files."
+                "Run `time_plot generate-example-data` to generate example files."
             )
             raise click.ClickException(msg)
+
+        if source_spec.name:
+            if source_spec.name == "expr":
+                raise click.ClickException("'expr' is a reserved data_source name and cannot be used.")
+            data_source_name = source_spec.name
+        else:
+            data_source_name = source_file.stem
+
+        # Name-bump auto-generated data_source_names on conflict; error for CLI names.
+        if data_source_name in seen_source_names:
+            if source_spec.name:
+                raise click.ClickException(f"Duplicate data_source name: {data_source_name}")
+            counter = 1
+            while f"{data_source_name}_{counter}" in seen_source_names:
+                counter += 1
+            data_source_name = f"{data_source_name}_{counter}"
+        seen_source_names.add(data_source_name)
+
         file_specs.append(
             InputFileSpec(
                 arg_position=position,
                 path=source_file,
-                dataset_name=dataset_name,
+                data_source_name=data_source_name,
                 cli_name=source_spec.name,
             ),
         )
@@ -155,53 +180,29 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         click.echo(f"Input:  {dataset.source_path}")
         click.echo(f"Legend: {dataset.legend_name}")
         click.echo(f"Name:   {dataset.dataset_name}")
-    for expr in expression_specs:
-        click.echo(f"Expr:   {expr.expression_text}")
-        click.echo(f"Legend: {expr.legend_name}")
-        click.echo(f"Name:   {expr.dataset_name}")
+    for expr_spec in expression_specs:
+        click.echo(f"Expr:   {expr_spec.expression_text}")
+        click.echo(f"Legend: {expr_spec.legend_name}")
+        click.echo(f"Name:   {expr_spec.dataset_name}")
     click.echo(f"Output: {written}")
 
 
-@cli.command("sample")
-@click.option(
-    "-o",
-    "--output",
-    "output_path",
-    type=click.Path(path_type=Path, dir_okay=False),
-    default=None,
-    help="Where to write the sample CSV.",
-)
-@click.option(
-    "--points",
-    type=int,
-    default=1000,
-    show_default=True,
-    help="Number of sample points to generate.",
-)
-def generate_sample(output_path: Path | None, points: int) -> None:
-    """Write the development CSV sample: Voltage vs. Time CSV."""
-
-    destination = output_path or _default_sample_path()
-    written = write_voltage_time_sample_csv(destination, points=points)
-    click.echo(f"Wrote sample CSV: {written}")
-
-
-@cli.command("sample-files")
+@cli.command("generate-example-data")
 @click.option(
     "-d",
     "--dir",
     "output_dir",
     type=click.Path(path_type=Path, file_okay=False),
     default=None,
-    help="Output directory for generated example CSV files.",
+    help="Output directory for generated example data files.",
 )
-def generate_sample_files(output_dir: Path | None) -> None:
+def generate_example_data(output_dir: Path | None) -> None:
     """Generate the seed example data files used for development/tests."""
 
-    destination = output_dir or (_repo_root() / "sample_data")
+    destination = output_dir or (_repo_root() / "example_data")
     written = write_example_data_files(destination)
     for path in written:
-        click.echo(f"Wrote example CSV: {path}")
+        click.echo(f"Wrote example file: {path}")
 
 
 def main() -> None:

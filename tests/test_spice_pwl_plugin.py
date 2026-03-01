@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from time_plot.plugin_system import discover_plugins, select_plugin
 
@@ -54,8 +55,8 @@ def test_parse_inline_parens(tmp_path: Path) -> None:
     spi.write_text("i1 n1 0 pwl(0 0 10n 5m 20n 7m)\n", encoding="utf-8")
     [series] = _plugin().parse(spi, {})
     assert series.name == "i1"
-    assert series.y_unit == "i"
-    assert series.y_unit_label == "Current"
+    assert series.y_unit == "a"
+    assert series.y_unit_label == "Amps"
     np.testing.assert_allclose(series.x, [0.0, 10e-9, 20e-9])
     np.testing.assert_allclose(series.y, [0.0, 5e-3, 7e-3])
 
@@ -89,7 +90,7 @@ def test_parse_voltage_source_unit(tmp_path: Path) -> None:
     spi.write_text("v1 n1 0 pwl 0 0 1u 3.3\n", encoding="utf-8")
     [series] = _plugin().parse(spi, {})
     assert series.y_unit == "v"
-    assert series.y_unit_label == "Voltage"
+    assert series.y_unit_label == "Volts"
     np.testing.assert_allclose(series.x, [0.0, 1e-6])
     np.testing.assert_allclose(series.y, [0.0, 3.3])
 
@@ -107,18 +108,35 @@ def test_parse_multiple_sources(tmp_path: Path) -> None:
     assert series_list[1].name == "i2"
 
 
-def test_parse_sample_file() -> None:
-    sample = _repo_root() / "sample_data" / "spice_pwl_test1.spi"
+def test_parse_naming_method_positive_node_name(tmp_path: Path) -> None:
+    spi = tmp_path / "test.spi"
+    spi.write_text("i1 bar 0 pwl 0 0 10n 5m\n", encoding="utf-8")
+    [series] = _plugin().parse(spi, {"naming_method": "positive_node_name"})
+    assert series.name == "bar"
+
+
+def test_parse_rejects_mixed_source_types(tmp_path: Path) -> None:
+    spi = tmp_path / "test.spi"
+    spi.write_text(
+        "i1 n1 0 pwl 0 0 10n 5m\n"
+        "v1 n2 0 pwl 0 0 10n 5m\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="both voltage and current"):
+        _plugin().parse(spi, {})
+
+
+def test_parse_example_file() -> None:
+    sample = _repo_root() / "example_data" / "spice_pwl.spi"
     if not sample.exists():
         return
     plugin = _plugin()
     assert plugin.identify(sample)
     series_list = plugin.parse(sample, {})
-    assert len(series_list) == 4
+    assert len(series_list) == 2
     for series in series_list:
-        assert series.y_unit == "i"
-        np.testing.assert_allclose(series.x, [0.0, 10e-9, 20e-9])
-        np.testing.assert_allclose(series.y, [0.0, 5e-3, 7e-3])
+        assert series.y_unit == "v"
+        assert len(series.x) == 300
 
 
 def test_select_plugin_finds_spice_pwl(tmp_path: Path) -> None:

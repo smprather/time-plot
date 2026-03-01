@@ -6,7 +6,8 @@ Project specification and design documentation for `time-plot`.
 
 - Project: `time-plot`
 - Script name: `time_plot`
-- Purpose: plot time-series data (non-calendar time on x-axis) using embedded `uPlot` JavaScript in generated HTML.
+- Purpose: plot time-series data (non-calendar time on x-axis) using embedded `uPlot` JavaScript in generated
+  HTML.
 - Runtime: Python (`>=3.14`) managed with `uv`
 
 ## Tech Stack
@@ -25,7 +26,7 @@ Project specification and design documentation for `time-plot`.
 - `uv.lock`: locked dependency versions
 - `time_plot/`: application package
 - `plugins/`: parser plugins
-- `sample_data/`: generated example CSV files
+- example_data/: generated example data files
 - `scripts/`: developer utility scripts
 - `tests/`: automated tests
 - `doc/`: project documentation
@@ -33,10 +34,62 @@ Project specification and design documentation for `time-plot`.
 
 ## Terminology
 
-- `uPlot`: the browser plotting library used in generated HTML. JS/CSS assets are sourced from the `uplot-python` pip package.
-- `uplot-python`: Python package providing uPlot static assets. We use only the bundled JS/CSS, not the Python plotting API.
-- `data set`: one named y-series over time.
+- `uPlot`: the browser plotting library used in generated HTML. JS/CSS assets are sourced from the
+  `uplot-python` pip package.
+- `uplot-python`: Python package providing uPlot static assets. We use only the bundled JS/CSS, not the Python
+  plotting API.
 - `y-axis type`: defined by `y_unit` alone. The label is cosmetic; only the unit determines axis grouping.
+- `data_source`: A file containing one or more `data_set`s.
+- `data_source_name`: A unique name assigned to each input file. Determined by (highest to lowest precedence):
+  1. CLI `name:/path/to/file` syntax.
+  2. File basename without extension (e.g., `sine` for `sine.csv`).
+- `data_set`: A single named y-series over time. Every data_set lives in one flat namespace and is referenced
+  by its `data_set_name` in expressions.
+- `data_set_name`: The unique identifier for a data_set. Used for expression references. See naming rules
+  below.
+- `data_set_label`: The display string used in legends and tables. May differ from the `data_set_name`.
+
+## Naming Rules
+
+All `data_set` names share a single flat namespace. Every `data_set_name` must be a valid Python identifier
+so it can be referenced in expressions.
+
+### data_source_name assignment
+
+Each input file gets a `data_source_name`:
+
+1. **CLI name** (highest): `name:/path/to/file` — the `name` portion is the `data_source_name`.
+2. **File basename** (fallback): the file stem (basename without extension).
+   - If the auto-generated `data_source_name` conflicts with an existing one, use integer name-bumps:
+     `foo_1`, `foo_2`, etc. Bumps are applied at the time of conflict.
+   - CLI-assigned duplicate `data_source_name`s are an error.
+3. `expr` is a reserved name. It is an error for `expr` to be used as a `data_source_name` on the CLI or
+   returned by a plugin.
+
+### data_set_name assignment (file-backed)
+
+- **Single-series source**: the `data_set_name` is the `data_source_name`.
+- **Multi-series source**: each series gets the `data_set_name` returned by the plugin
+  (i.e., `SeriesData.name`).
+  - If two or more raw `data_set_name`s collide across all sources, those entries are auto-prefixed as
+    `data_source_name__raw_name` (double underscore separator).
+  - Single-series entries are never prefixed because their name is already the `data_source_name`, which is
+    unique.
+
+### data_set_name assignment (expressions)
+
+- If a name is given on the CLI: `foo:expr[...]` → `data_set_name` is `foo`.
+- If no name is given: auto-assigned as `e1`, `e2`, etc. (separate counter from file-backed sources).
+- It is legal to assign a name matching the auto format (e.g., `e1:expr[...]`).
+- Duplicate expression `data_set_name`s are an error.
+- Expression `data_set_name`s must not collide with file-backed `data_set_name`s.
+
+### data_set_label (legend/display name)
+
+- **File-backed**: the label is the CLI name if given, otherwise `SeriesData.name`, otherwise the file stem.
+- **Expressions**:
+  - User-named (does not match `^e\d+$`): `data_set_name:expression_text_with_spaces_removed`
+  - Auto-named (matches `^e\d+$`): `expression_text_with_spaces_removed`
 
 ## Project Goals (Target Behavior)
 
@@ -45,27 +98,26 @@ Project specification and design documentation for `time-plot`.
   - Always label the x-axis as `Time (<units>)`.
 - The source of x, y data should be implemented as a plugin so users can add new formats.
 - Support up to two different y-axis types in a single plot.
-- Support generated data sets (expressions) that are functions of other data sets.
+- Support generated `data_set`s (expressions) that are functions of other `data_set`s.
 
 ## Current Implemented Features
 
 - Plugin-based file parsing with deterministic discovery (sorted by plugin package/file name).
-- Seed parser plugin:
-  - Plugin ID: `voltage-vs-time-csv`
-  - Package directory: `plugins/voltage_vs_time_csv`
+- Voltage/Current vs. Time CSV parser plugin:
+  - Plugin ID: `voltage-or-current-vs-time`
+  - Package directory: `plugins/voltage_or_current_vs_time`
 - SPICE PWL parser plugin:
   - Plugin ID: `spice-pwl`
   - Package directory: `plugins/spice_pwl`
 - Example data generation:
-  - `sample_data/sine.csv`
-  - `sample_data/cosine.csv`
-  - CLI command: `sample-files`
-  - Script: `scripts/generate_example_data.py`
+  - Refer to example_data.md
 - CLI positional source parsing:
   - files
   - named files (`name:path`)
   - expressions (`expr[...]` and `name:expr[...]`)
-  - default names `fN` based on argument position
+  - file-backed sources default to file basename (no extension) as `data_source_name`
+  - expression auto-naming: `eN`
+- Flat data_set namespace with `__` auto-prefix for multi-series name conflicts
 - Multi-file alignment:
   - deterministic common x-grid
   - smallest positive source `dx` used as global timestep
@@ -92,7 +144,8 @@ Project specification and design documentation for `time-plot`.
   - `+/-` require matching units
   - `*` and `/` build composed unit strings (for example `v/s`, `v*v`)
   - no symbolic simplification
-- Internal storage does not yet implement the optimization "store only min x + global timestep" for every data set.
+- Internal storage does not yet implement the optimization "store only min x + global timestep" for every
+  data_set.
 - CLI/integration coverage is focused and not exhaustive.
 
 ## MVP Scope (Next Work)
@@ -100,16 +153,16 @@ Project specification and design documentation for `time-plot`.
 - Extend expression function set as needed (`sqrt`, filters, etc.).
   - sqrt() should be next. Don't do any other functions until requested.
 - Improve expression unit semantics/simplification.
-- Add more parser plugins (including a second y-axis type to exercise dual-axis behavior end-to-end).
+- Add more parser plugins.
 - Strengthen CLI/integration tests for error cases and mixed input scenarios.
 
 ## Next Implementation Priorities
 
 - Expand expression function set and documentation.
 - Improve unit simplification/validation for expressions.
-- Add a second parser/type to exercise dual-y plots in realistic CLI flows.
 - Add stronger end-to-end CLI tests for mixed files + expressions + error conditions.
-- Consider implementing compact per-dataset x storage (`x_min + global dt`) if memory/performance becomes relevant.
+- Consider implementing compact per-data-set x storage (`x_min + global dt`) if memory/performance becomes
+  relevant.
 
 ## Parser Plugin Rules
 
@@ -119,79 +172,38 @@ Project specification and design documentation for `time-plot`.
 - Plugin identification is attempted in deterministic order.
   - Current rule: sorted by plugin package/file name.
 - The first matching plugin is used.
-- `parse()` receives `(file_path, options)` where `options` is `dict[str, str]` from the CLI `--parser-options` flag, and returns `list[SeriesData]`. Single-dataset plugins return a one-element list.
+- `parse()` receives `(file_path, options)` where `options` is `dict[str, str]` from the CLI
+  `--parser-options` flag, and returns `list[SeriesData]`. Single-data-set plugins return a one-element list.
 - If a plugin supports a file, each `SeriesData` must provide:
-  - `name`: a per-dataset identifier (required). For multi-series returns, used to build the dataset key (e.g., `f1_voltage` instead of `f1_1`) and as the default legend name.
-  - `y_unit`: short unit code with no SI prefix (e.g., `"v"`, `"i"`) — used for axis grouping and SI scaling.
-  - `y_unit_label`: long-form unit name (e.g., `"Voltage"`, `"Current"`) — used for y-axis display labels.
-  - x values converted to seconds
-  - `float64` numpy arrays for x and y in base units
-  - literal y-axis label
-
-## Seed Format Plugin (Template and Dev Plugin)
-
-- Format name: `Voltage vs. Time CSV`
-- Plugin ID: `voltage-vs-time-csv`
-- Plugin package directory: `plugins/voltage_vs_time_csv`
-- Base format: CSV with header names `time(<unit>)` and `voltage(<unit>)`
-- Units are stored in header parentheticals (for example `time(ns)`)
-- Recognition rule:
-  - filename must end in `.csv`
-  - first line must have column names `time(...)` and `voltage(...)`
-  - ignore parenthetical units when checking support
-  - Example recognized header: `time(ns),voltage(v)`
-- y-axis label returned by the plugin is the name of the file without the .csv extension.
-
-## SPICE PWL Plugin
-
-- Format name: `SPICE PWL`
-- Plugin ID: `spice-pwl`
-- Plugin package directory: `plugins/spice_pwl`
-- Parses SPICE netlists containing PWL (piecewise-linear) voltage or current sources.
-- Recognition rule:
-  - First non-comment (`*`), non-empty line must start with `i` or `v` (case-insensitive).
-  - That line, whitespace-split, must contain `pwl` (substring match) at position index >= 3.
-- Line continuations: lines starting with `+` are appended to the previous logical line before parsing.
-- Source type determines y-unit: `v` prefix → y_unit `v`, `i` prefix → y_unit `i`.
-- PWL values are time-value pairs with SPICE numeric suffixes (`n`=1e-9, `m`=1e-3, `u`=1e-6, `k`=1e3, `meg`=1e6, etc.).
-- Time values are converted to seconds; y values are stored in base units.
-- Each PWL source in the file produces one `SeriesData` with `name` set to the SPICE source name (e.g., `i1`).
-
-## Example Data Utility Requirements
-
-- Used for development and test writing.
-- Write files to `sample_data/`.
-- CSV headers must be `time(ns),voltage(mv)`.
-- Required files:
-  - `sine.csv`
-    - 1000 points spanning `1.0` microsecond
-    - 2 cycles of sine wave
-    - amplitude `1 V` (stored as `mV`)
-  - `cosine.csv`
-    - 800 points spanning `2.0` microseconds
-    - 3 cycles of cosine wave
-    - amplitude `2 V` (stored as `mV`)
+  - `name`: a per-data_set identifier. For single-series plugins, use the file stem. For multi-series plugins,
+    a unique name per series (e.g., the element name in SPICE PWL).
+  - `y_unit`: short unit code with no SI prefix (e.g., `"v"`, `"a"`) — used for axis grouping and SI scaling.
+  - `y_unit_label`: long-form unit name (e.g., `"Voltage"`, `"Amps"`) — used for y-axis display labels.
+  - x values converted to seconds.
+  - `float64` numpy arrays for x and y in base units.
+  - `y_label`: literal y-axis label for the data_set.
 
 ## CLI Rules
 
 - Positional arguments may refer to:
-  1. File paths
-  1. Expressions (`expr[...]`)
+    1. File paths
+    2. Expressions (`expr[...]`)
 - A file or expression may be named with `<name>:` prefix:
   - Example: `data1:/foo/bar.csv`
-  - Example: `total:expr[f1+f2]`
-- Unnamed sources are auto-named `fN` where `N` is the positional argument number (starting at `1`).
+  - Example: `total:expr[sine+cosine]`
+- Unnamed file sources get their file basename (without extension) as the `data_source_name`.
   - Example: `time_plot foo.csv bar.csv`
-    - `foo.csv` is `f1`
-    - `bar.csv` is `f2`
-- Names for any data set (file or expression) share one namespace.
-  - Duplicate names are errors.
-- Expression references use data set names.
+  - `foo.csv` → `data_source_name` is `foo`
+  - `bar.csv` → `data_source_name` is `bar`
+  - If basenames collide, auto name-bumps are applied: `foo`, `foo_1`, etc.
+- Unnamed expressions are auto-named `e1`, `e2`, etc. (separate counter).
+- `expr` is reserved and cannot be used as a CLI name.
+- Duplicate CLI-assigned names are errors.
+- Expression references use `data_set_name`s (flat namespace).
   - For predictable references, use valid Python identifiers in names.
-  - Auto-names (`fN`) are always valid identifiers.
 - Shell usage:
   - Quote expression arguments to avoid shell parsing issues.
-  - Example: `time_plot foo.csv 'total:expr[f1+f1]'`
+  - Example: `time_plot sine.csv 'total:expr[sine+sine]'`
 
 ## Data Model Conventions
 
@@ -212,11 +224,12 @@ Project specification and design documentation for `time-plot`.
 - No extrapolation outside a source's x-range.
   - Missing values outside range are `NaN`.
 - Global x-grid endpoint behavior:
-  - include the exact global `x_max` even if it is not an integer multiple of the global timestep from `x_min`.
+  - include the exact global `x_max` even if it is not an integer multiple of the global timestep from
+    `x_min`.
 - A global x-axis timestep should be stored and used.
   - Current implementation stores `x_timestep_seconds` in the aligned plot model.
-- Expressions may refer to file-backed data sets and other expressions.
-- Names are assigned to all data sets before expression evaluation.
+- Expressions may refer to file-backed `data_set`s and other expressions.
+- Names are assigned to all `data_set`s before expression evaluation.
 - Circular expression references are errors.
 - Expression results are computed only where all referenced inputs are available.
   - Missing inputs propagate to `NaN`.
@@ -239,16 +252,13 @@ Project specification and design documentation for `time-plot`.
 ## Plotting Rules
 
 - When two y-axis types are present, use `uPlot` dual y-axis support.
-- Y-axis labels: `"LongUnit (SI_prefix + ShortUnit)"` — e.g., `"Voltage (mv)"`, `"Current (mi)"`.
-- Summary table column headers include `(SI_prefix + ShortUnit)` when all traces share a single y-unit — e.g., `"Average (mv)"`.
+- Y-axis labels: `"LongUnit (SI_prefix + ShortUnit)"` — e.g., `"Voltage (mv)"`, `"Amps (ma)"`.
+- Summary table column headers include `(SI_prefix + ShortUnit)` when all traces share a single y-unit — e.g.,
+  `"Average (mv)"`.
   - When multiple y-units are present, headers omit the unit and values include inline units instead.
-- Legend naming precedence (highest to lowest):
-  1. CLI name (`<name>:`)
-  1. Parser plugin-provided `SeriesData.name`
-  1. Basename of the input file without extension
-  1. Expression text with spaces removed
 - The chart title is not rendered on the uPlot chart (no `title` in JS opts).
-- An "Input File" table shows the source file path for each trace. Expression traces show their expression source (e.g., `expr[ddt(f1)]`) instead.
+- An "Input File" table shows the source file path for each trace. Expression traces show their expression
+  source (e.g., `expr[ddt(f1)]`) instead.
 - SI display scaling must be auto-selected for readability.
   - Current heuristic target:
     - prefer max magnitude in a readable range

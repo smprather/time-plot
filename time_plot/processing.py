@@ -14,7 +14,7 @@ from time_plot.plugin_system import ParserPlugin, select_plugin
 class InputFileSpec:
     arg_position: int
     path: Path
-    dataset_name: str
+    data_source_name: str
     cli_name: str | None = None
 
 
@@ -61,31 +61,50 @@ def load_input_files(
     plugins: list[ParserPlugin],
     parser_options: dict[str, str] | None = None,
 ) -> list[LoadedDataset]:
-    loaded: list[LoadedDataset] = []
     opts = parser_options or {}
-    seen_dataset_names: set[str] = set()
+
+    # Phase 1: Parse all files and collect raw data_set names per source.
+    raw_entries: list[tuple[InputFileSpec, str, SeriesData, str]] = []  # (spec, plugin_name, series, raw_name)
     for spec in input_files:
         plugin = select_plugin(spec.path, plugins)
         series_list = plugin.parse(spec.path, opts)
         for series in series_list:
             if len(series_list) == 1:
-                dataset_name = spec.dataset_name
+                raw_name = spec.data_source_name
             else:
-                dataset_name = f"{spec.dataset_name}_{series.name}"
-            if dataset_name in seen_dataset_names:
-                msg = f"Duplicate dataset name: {dataset_name}"
-                raise ValueError(msg)
-            seen_dataset_names.add(dataset_name)
-            legend_name = _legend_name(spec, series)
-            loaded.append(
-                LoadedDataset(
-                    dataset_name=dataset_name,
-                    legend_name=legend_name,
-                    source_path=spec.path,
-                    plugin_name=plugin.plugin_name,
-                    series=series,
-                ),
-            )
+                raw_name = series.name
+            raw_entries.append((spec, plugin.plugin_name, series, raw_name))
+
+    # Phase 2: Detect raw name conflicts and auto-prefix with data_source_name__
+    # when needed.  Single-series sources use data_source_name directly (which is
+    # already unique).  Multi-series entries that collide get prefixed.
+    name_counts: dict[str, int] = {}
+    for _, _, _, raw_name in raw_entries:
+        name_counts[raw_name] = name_counts.get(raw_name, 0) + 1
+
+    seen: set[str] = set()
+    loaded: list[LoadedDataset] = []
+    for spec, plugin_name, series, raw_name in raw_entries:
+        if name_counts[raw_name] > 1:
+            dataset_name = f"{spec.data_source_name}__{raw_name}"
+        else:
+            dataset_name = raw_name
+
+        if dataset_name in seen:
+            msg = f"Duplicate dataset name: {dataset_name}"
+            raise ValueError(msg)
+        seen.add(dataset_name)
+
+        legend_name = _legend_name(spec, series)
+        loaded.append(
+            LoadedDataset(
+                dataset_name=dataset_name,
+                legend_name=legend_name,
+                source_path=spec.path,
+                plugin_name=plugin_name,
+                series=series,
+            ),
+        )
     return loaded
 
 
@@ -212,17 +231,17 @@ def _legend_name(spec: InputFileSpec, series: SeriesData) -> str:
         return series.name
     if spec.path.name:
         return spec.path.stem
-    return spec.dataset_name
+    return spec.data_source_name
 
 
-def default_dataset_name(arg_position: int) -> str:
-    return f"f{arg_position}"
+def expression_legend_name(dataset_name: str, expression_text: str) -> str:
+    import re
 
-
-def expression_legend_name(cli_name: str | None, expression_text: str) -> str:
-    if cli_name:
-        return cli_name
-    return expression_text.replace(" ", "")
+    compact = expression_text.replace(" ", "")
+    # Auto-generated names match eN pattern.
+    if re.fullmatch(r"e\d+", dataset_name):
+        return compact
+    return f"{dataset_name}:{compact}"
 
 
 def _validate_strictly_increasing_x(x: np.ndarray, source_path: Path) -> None:
@@ -368,7 +387,11 @@ def _eval_expression(
     trace_meta_by_name: dict[str, AlignedTrace],
 ) -> tuple[np.ndarray, _ExprValue]:
     root = ast.parse(expression_text, mode="eval")
-    value = _eval_expr_node(root.body, x_seconds, values_by_name, trace_meta_by_name)
+    try:
+        value = _eval_expr_node(root.body, x_seconds, values_by_name, trace_meta_by_name)
+    except ValueError as exc:
+        msg = f"{exc} in expression: {expression_text}"
+        raise ValueError(msg) from None
     output = value.values.copy()
     output[~value.finite_mask] = np.nan
     return output, _ExprValue(
