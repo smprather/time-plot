@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 
-import click
+import rich_click as click
 
 from time_plot.plotting import write_multi_html
+from time_plot.plugin_system import discover_plugins
 from time_plot.processing import (
     ExpressionSpec,
     InputFileSpec,
@@ -15,8 +16,6 @@ from time_plot.processing import (
     expression_legend_name,
     load_input_files,
 )
-from time_plot.plugin_system import discover_plugins
-from time_plot.example_data import write_example_data_files
 
 
 def _repo_root() -> Path:
@@ -51,12 +50,7 @@ def parse_cli_source_spec(arg: str) -> CliSourceSpec:
     return CliSourceSpec(name=name, raw=raw, kind=kind)
 
 
-@click.group()
-def cli() -> None:
-    """Plot time-series data via pluggable parsers."""
-
-
-@cli.command()
+@click.command()
 @click.argument("sources", nargs=-1, type=str)
 @click.option(
     "-o",
@@ -79,11 +73,18 @@ def cli() -> None:
     default=None,
     help="Comma-separated key=value pairs passed to parser plugins.",
 )
-def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path | None, parser_options_raw: str | None) -> None:
-    """Parse a data file with the first matching plugin and write an HTML plot."""
+def cli(
+    sources: tuple[str, ...],
+    output_path: Path | None,
+    plugins_dir: Path | None,
+    parser_options_raw: str | None,
+) -> None:
+    """Plot time-series data via pluggable parsers."""
 
     if not sources:
-        source_specs = [CliSourceSpec(name=None, raw=str(_default_example_path()), kind="file")]
+        source_specs = [
+            CliSourceSpec(name=None, raw=str(_default_example_path()), kind="file")
+        ]
     else:
         source_specs = [parse_cli_source_spec(value) for value in sources]
 
@@ -96,7 +97,9 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
             expression_text = source_spec.raw[5:-1]
             if source_spec.name:
                 if source_spec.name == "expr":
-                    raise click.ClickException("'expr' is a reserved data_source name and cannot be used.")
+                    raise click.ClickException(
+                        "'expr' is a reserved data_source name and cannot be used."
+                    )
                 dataset_name = source_spec.name
             else:
                 expr_counter += 1
@@ -115,13 +118,15 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         if not source_file.exists():
             msg = (
                 f"Input file not found: {source_file}\n"
-                "Run `time_plot generate-example-data` to generate example files."
+                "Run `scripts/generate_example_data.py` to generate example files."
             )
             raise click.ClickException(msg)
 
         if source_spec.name:
             if source_spec.name == "expr":
-                raise click.ClickException("'expr' is a reserved data_source name and cannot be used.")
+                raise click.ClickException(
+                    "'expr' is a reserved data_source name and cannot be used."
+                )
             data_source_name = source_spec.name
         else:
             data_source_name = source_file.stem
@@ -129,7 +134,9 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         # Name-bump auto-generated data_source_names on conflict; error for CLI names.
         if data_source_name in seen_source_names:
             if source_spec.name:
-                raise click.ClickException(f"Duplicate data_source name: {data_source_name}")
+                raise click.ClickException(
+                    f"Duplicate data_source name: {data_source_name}"
+                )
             counter = 1
             while f"{data_source_name}_{counter}" in seen_source_names:
                 counter += 1
@@ -149,7 +156,9 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
     if parser_options_raw:
         for pair in parser_options_raw.split(","):
             if "=" not in pair:
-                raise click.ClickException(f"Invalid parser option (missing '='): {pair}")
+                raise click.ClickException(
+                    f"Invalid parser option (missing '='): {pair}"
+                )
             key, value = pair.split("=", 1)
             parser_options[key.strip()] = value.strip()
 
@@ -171,8 +180,14 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         if len(loaded) == 1
         else (_repo_root() / "plots" / "combined.html")
     )
-    title_parts = [dataset.legend_name for dataset in loaded] + [expr.legend_name for expr in expression_specs]
-    title = loaded[0].series.source_name if len(title_parts) == 1 and loaded else ", ".join(title_parts)
+    title_parts = [dataset.legend_name for dataset in loaded] + [
+        expr.legend_name for expr in expression_specs
+    ]
+    title = (
+        loaded[0].series.source_name
+        if len(title_parts) == 1 and loaded
+        else ", ".join(title_parts)
+    )
     written = write_multi_html(aligned, final_output, title=title)
 
     for dataset in loaded:
@@ -185,24 +200,6 @@ def plot(sources: tuple[str, ...], output_path: Path | None, plugins_dir: Path |
         click.echo(f"Legend: {expr_spec.legend_name}")
         click.echo(f"Name:   {expr_spec.dataset_name}")
     click.echo(f"Output: {written}")
-
-
-@cli.command("generate-example-data")
-@click.option(
-    "-d",
-    "--dir",
-    "output_dir",
-    type=click.Path(path_type=Path, file_okay=False),
-    default=None,
-    help="Output directory for generated example data files.",
-)
-def generate_example_data(output_dir: Path | None) -> None:
-    """Generate the seed example data files used for development/tests."""
-
-    destination = output_dir or (_repo_root() / "example_data")
-    written = write_example_data_files(destination)
-    for path in written:
-        click.echo(f"Wrote example file: {path}")
 
 
 def main() -> None:

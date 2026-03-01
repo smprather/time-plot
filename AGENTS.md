@@ -16,7 +16,7 @@ Guidance for coding agents working in this repository.
 
 - CLI (preferred): `uv run time_plot ...`
 - Dev fallback entrypoint: `uv run python main.py ...`
-- Generate example files: `uv run time_plot generate-example-data`
+- Generate example files: `uv run python scripts/generate_example_data.py`
 - Run tests: `uv run pytest`
 - Add dependency: `uv add <package>`
 - Add dev dependency: `uv add --dev <package>`
@@ -26,9 +26,9 @@ Guidance for coding agents working in this repository.
 - Run focused tests for changed modules first.
 - Minimum useful commands:
   - `uv run pytest -q`
-  - `uv run time_plot generate-example-data`
-  - `uv run time_plot plot example_data/sine.csv`
-  - `uv run time_plot plot example_data/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'`
+  - `uv run python scripts/generate_example_data.py`
+  - `uv run time_plot example_data/sine.csv`
+  - `uv run time_plot example_data/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'`
 - If skipping validation, state why in handoff.
 
 ## Coding Standards

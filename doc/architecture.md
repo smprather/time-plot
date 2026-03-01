@@ -14,7 +14,7 @@ Project specification and design documentation for `time-plot`.
 
 - Python >= 3.14
 - `uPlot` via `uplot-python` (embedded JS assets in generated HTML)
-- Click CLI
+- Click CLI, using rich-click color wrapper
 - Pytest
 - Astral Ruff
 - Astral Ty

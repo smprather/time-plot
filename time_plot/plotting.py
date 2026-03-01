@@ -169,7 +169,6 @@ def write_multi_html(
 
     html_text = _render_multi_html(
         title=title,
-        source_name=title,
         columns=columns,
         series_configs=series_configs,
         axes_configs=axes_configs,
@@ -184,7 +183,6 @@ def write_multi_html(
 def _render_multi_html(
     *,
     title: str,
-    source_name: str,
     columns: list[list[float | None]],
     series_configs: list[dict],
     axes_configs: list[dict],
@@ -197,7 +195,6 @@ def _render_multi_html(
     axes_json = json.dumps(axes_configs)
     title_json = json.dumps(title)
     safe_title = html.escape(title)
-    safe_source_name = html.escape(source_name)
 
     table_rows = ""
     for row in summary_rows:
@@ -289,7 +286,7 @@ def _render_multi_html(
 <body>
     <div class="wrap">
       <div class="card">
-      <p class="meta">Source: {safe_source_name}</p>
+      <p class="meta">Left-mouse double-click to zoom full</p>
       <div id="plot" aria-label="Time series plot"></div>
       <table class="summary">
         <thead>
