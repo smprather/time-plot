@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import webbrowser
 
 import rich_click as click
 
@@ -70,11 +71,17 @@ def parse_cli_source_spec(arg: str) -> CliSourceSpec:
     default=None,
     help="Comma-separated key=value pairs passed to parser plugins.",
 )
+@click.option(
+    "--open-browser/--no-open-browser",
+    default=True,
+    help="Open the output HTML in the default browser after writing (default: true).",
+)
 def cli(
     sources: tuple[str, ...],
     output_path: Path | None,
     plugins_dir: Path | None,
     parser_options_raw: str | None,
+    open_browser: bool,
 ) -> None:
     """Plot time-series data via pluggable parsers."""
 
@@ -197,6 +204,9 @@ def cli(
         click.echo(f"Legend: {expr_spec.legend_name}")
         click.echo(f"Name:   {expr_spec.dataset_name}")
     click.echo(f"Output: {written}")
+
+    if open_browser:
+        webbrowser.open(written.as_uri())
 
 
 def main() -> None:
