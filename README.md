@@ -9,6 +9,7 @@ Plot arbitrary time-series data (non-calendar x-axis) into self-contained HTML u
 - Evaluates derived traces from expressions (`expr[...]`), including chained expressions.
 - Renders interactive offline HTML plots with summary statistics and input/source metadata.
 - Supports dual y-axes (up to two distinct y-units per plot).
+- Opens the result in your browser automatically.
 
 ## Requirements
 
@@ -17,43 +18,33 @@ Plot arbitrary time-series data (non-calendar x-axis) into self-contained HTML u
 
 ## Installation
 
+Install as a user tool (recommended):
+
 ```bash
-uv sync --group dev
+uv tool install git+https://github.com/smprather/time-plot
 ```
 
-Run via installed CLI entry point:
+Then run anywhere:
 
 ```bash
-uv run time_plot --help
-```
-
-Dev fallback entry point:
-
-```bash
-uv run python main.py --help
+time_plot --help
 ```
 
 ## Quick Start
 
-Generate sample inputs:
-
-```bash
-uv run python scripts/generate_example_data.py
-```
-
 Render a single input file:
 
 ```bash
-uv run time_plot example_data/sine.csv
+time_plot path/to/data.csv
 ```
 
 Render file + derived expressions:
 
 ```bash
-uv run time_plot example_data/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'
+time_plot path/to/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'
 ```
 
-If you run `time_plot` with no positional sources, it defaults to `example_data/sine.csv`.
+Running with no positional sources opens the built-in `sine.csv` example.
 
 ## CLI Usage
 
@@ -63,36 +54,36 @@ time_plot [OPTIONS] [SOURCES]...
 
 Options:
 
-- `-o, --output FILE`: output HTML path.
-- `--plugins-dir DIRECTORY`: plugin directory override (default: `plugins/` in repo root).
+- `-o, --output FILE`: output HTML path. Defaults to `./plots/<input-stem>.html`.
+- `--open-browser / --no-open-browser`: open the output in the default browser after writing (default: `--open-browser`).
+- `--plugins-dir DIRECTORY`: plugin directory override.
 - `--parser-options TEXT`: comma-separated `key=value` pairs passed to plugins.
 
 Positional `SOURCES` can be:
 
-- File path: `example_data/sine.csv`
-- Named file: `sine_a:example_data/sine.csv`
+- File path: `data.csv`
+- Named file: `my_name:data.csv`
 - Expression: `expr[sine+sine]`
 - Named expression: `sum:expr[sine+sine]`
 
-Quote expressions in the shell.
+Quote expressions in the shell to avoid interpretation of `[` and `]`.
 
-## Output Behavior
+## Output
 
-- Default output path for a single input source: `plots/<input-stem>.html`
-- Default output path for multiple sources: `plots/combined.html`
-- Plot HTML is self-contained (inlines `uPlot` JS/CSS assets).
-- Output includes an interactive chart with mousewheel zoom support.
-- Output includes a summary table (`Peak |y|`, `Average`, `RMS`).
-- Output includes a source table (`Label`, `Input File` or expression source).
+- Default output path for a single input source: `./plots/<input-stem>.html`
+- Default output path for multiple sources: `./plots/combined.html`
+- Plot HTML is self-contained (inlines `uPlot` JS/CSS assets) — works offline.
+- Interactive chart with mousewheel zoom.
+- Summary statistics table (`Peak |y|`, `Average`, `RMS`).
+- Source table showing input file paths or expression text per trace.
 
-## Supported Input Formats (Built-in Plugins)
+## Supported Input Formats
 
 ### 1) Voltage/Current vs. Time CSV
 
 - Plugin ID: `voltage-or-current-vs-time`
 - File type: `.csv`
-- Expected header shape (2 columns): `time(<unit>),voltage(<unit>)` or `time(<unit>),current(<unit>)`
-- Example:
+- Two-column header: `time(<unit>),voltage(<unit>)` or `time(<unit>),current(<unit>)`
 
 ```csv
 time(ns),voltage(mv)
@@ -105,69 +96,59 @@ time(ns),voltage(mv)
 - Plugin ID: `spice-pwl`
 - Parses SPICE netlists containing `pwl` voltage or current sources.
 - Supports line continuations with leading `+`.
-- Rejects files mixing voltage and current source types.
-- One PWL source becomes one plotted dataset.
-- Supports parser option `naming_method` with values `element_name` (default) or `positive_node_name`.
-
-Example:
+- Each PWL source becomes one dataset.
+- Parser option `naming_method`: `element_name` (default) or `positive_node_name`.
 
 ```bash
-uv run time_plot example_data/spice_pwl.spi --parser-options naming_method=positive_node_name
+time_plot spice_pwl.spi --parser-options naming_method=positive_node_name
+```
+
+### 3) Cadence Dynamic Power Total Current
+
+- Plugin ID: `cadence-dynamic-power-totalcurrent`
+- File type: `.totalcurrent`
+- Three tab-separated columns: row index, time (seconds, scientific notation), current (amps).
+
+```bash
+time_plot VDD.peak.totalcurrent
 ```
 
 ## Expressions
 
-Expression syntax:
+Syntax: `expr[<expression>]` or `<name>:expr[<expression>]`
 
-- `expr[<expression>]` or `<name>:expr[<expression>]`
-- References use dataset names in a flat namespace.
+References use dataset names (flat namespace, valid Python identifiers).
 
-Supported operators:
+Operators: `+`, `-`, `*`, `/`
 
-- `+`, `-`, `*`, `/`
+Functions:
 
-Supported functions:
-
-- `average(x)`
-- `rms(x)`
-- `abs(x)`
-- `ddt(x)` (finite-difference derivative over aligned time grid)
-
-Examples:
+- `average(x)` — mean over the time grid
+- `rms(x)` — RMS over the time grid
+- `abs(x)` — element-wise absolute value
+- `ddt(x)` — finite-difference derivative
 
 ```bash
-uv run time_plot example_data/sine.csv 'expr[sine+sine]'
-uv run time_plot example_data/sine.csv 'sum:expr[sine+sine]' 'rate:expr[ddt(sum)]'
+time_plot sine.csv 'sum:expr[sine+sine]' 'rate:expr[ddt(sum)]'
 ```
 
-Expression rules:
+Rules:
 
 - Unnamed expressions auto-name as `e1`, `e2`, ...
-- Expression names must be valid Python identifiers.
-- Duplicate names are errors.
-- Expressions must reference known dataset names.
-- Circular expression references are rejected.
-- At least one file-backed dataset is required to evaluate expressions.
+- Circular references and unknown names are errors.
+- `+`/`-` require matching units; `*`/`/` produce composed unit strings.
 
-## Naming Rules
+## Naming
 
-- File-backed dataset names default to file stem (unless explicitly named with `<name>:<path>`).
-- Auto-generated file source name collisions are bumped (`foo`, `foo_1`, `foo_2`, ...).
-- Multi-series plugin name collisions are prefixed as `<data_source_name>__<raw_name>`.
-- `expr` is a reserved source name and cannot be used as a CLI name.
-
-## Units and Axes
-
-- Internal x-axis storage is always seconds.
-- Plugins normalize values to base units (for example `mv` -> `v`, `ns` -> `s`).
-- Display scaling uses automatic SI prefixes for readability.
-- `+` and `-` require matching units.
-- `*` and `/` produce composed unit strings.
-- A single plot supports at most two distinct y-units.
+- File-backed dataset names default to file stem (`sine.csv` → `sine`).
+- Explicit name: `my_name:/path/to/file.csv`
+- Auto-generated name collisions are bumped: `foo`, `foo_1`, `foo_2`, ...
+- Multi-series name collisions are prefixed: `<source>__<series>`
+- `expr` is a reserved name.
 
 ## Plugin System
 
-Plugins are discovered from a directory (`plugins/` by default) in deterministic sorted order. The first plugin whose `identify(path)` returns `True` handles the file.
+Plugins are discovered from `time_plot/plugins/` in deterministic sorted order. The first plugin whose `identify(path)` returns `True` handles the file.
 
 A plugin must provide:
 
@@ -175,9 +156,15 @@ A plugin must provide:
 - `parse(path: Path, options: dict[str, str]) -> list[SeriesData]`
 - Optional `plugin_name() -> str`
 
-See [`doc/plugins.md`](doc/plugins.md) for current plugin details.
+Override the search directory with `--plugins-dir`.
 
 ## Development
+
+```bash
+git clone https://github.com/smprather/time-plot
+cd time-plot
+uv sync --group dev
+```
 
 Run tests:
 
@@ -185,50 +172,42 @@ Run tests:
 uv run pytest -q
 ```
 
-Run linters/type checks:
+Lint and type check:
 
 ```bash
 uv run ruff check .
 uv run ty check
 ```
 
-Generate example data:
+Regenerate example data:
 
 ```bash
 uv run python scripts/generate_example_data.py
 ```
 
-Useful validation commands:
+Validation:
 
 ```bash
 uv run pytest -q
-uv run python scripts/generate_example_data.py
-uv run time_plot example_data/sine.csv
-uv run time_plot example_data/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'
+uv run time_plot --no-open-browser time_plot/example_data/sine.csv
+uv run time_plot --no-open-browser time_plot/example_data/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'
 ```
 
 ## Repository Layout
 
-- `time_plot/`: CLI, processing, plotting, units, plugin loading.
-- `plugins/`: parser plugins.
-- `example_data/`: generated sample files.
-- `scripts/`: project utilities.
+- `time_plot/`: CLI, processing, plotting, units, plugin system.
+- `time_plot/plugins/`: parser plugins.
+- `time_plot/example_data/`: bundled sample files.
+- `scripts/`: developer utilities.
 - `tests/`: automated tests.
 - `doc/`: architecture and plugin docs.
 
 ## Troubleshooting
 
-- `Input file not found ...`: generate sample inputs with `uv run python scripts/generate_example_data.py` or pass a valid path.
-- `No plugins found ...`: verify `plugins/` exists or pass `--plugins-dir`.
-- `No plugin recognized file ...`: check file format/header and plugin coverage.
-- `Unknown dataset referenced in expression ...`: use correct dataset names.
-- `At most two distinct y-axis units are supported.`: split traces into separate plots if needed.
-
-## Documentation
-
-- Architecture: [`doc/architecture.md`](doc/architecture.md)
-- Plugins: [`doc/plugins.md`](doc/plugins.md)
-- Example data: [`doc/example_data.md`](doc/example_data.md)
+- `Input file not found`: check the path; generate sample files with `uv run python scripts/generate_example_data.py`.
+- `No plugin recognized file`: check file format and suffix against supported plugins.
+- `Unknown dataset referenced in expression`: verify the dataset name matches the file stem or explicit name.
+- `At most two distinct y-axis units are supported`: split traces into separate `time_plot` invocations.
 
 ## License
 
