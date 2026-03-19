@@ -12,7 +12,7 @@ def _repo_root() -> Path:
 
 
 def _plugin():
-    plugins = discover_plugins(_repo_root() / "plugins")
+    plugins = discover_plugins(_repo_root() / "time_plot" / "plugins")
     assert plugins, "expected at least one plugin"
     plugin = next((p for p in plugins if p.plugin_name == "voltage-or-current-vs-time"), None)
     assert plugin is not None, "voltage-or-current-vs-time plugin not found"
@@ -83,8 +83,8 @@ def test_parse_current_returns_base_units(tmp_path: Path) -> None:
 
 
 def test_sample_file_is_recognized_and_selectable() -> None:
-    sample_file = _repo_root() / "example_data" / "sine.csv"
-    plugins = discover_plugins(_repo_root() / "plugins")
+    sample_file = _repo_root() / "time_plot" / "example_data" / "sine.csv"
+    plugins = discover_plugins(_repo_root() / "time_plot" / "plugins")
     plugin = select_plugin(sample_file, plugins)
 
     assert plugin.plugin_name == "voltage-or-current-vs-time"

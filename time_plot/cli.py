@@ -18,16 +18,12 @@ from time_plot.processing import (
 )
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
 def _default_plugins_dir() -> Path:
-    return _repo_root() / "plugins"
+    return Path(__file__).parent / "plugins"
 
 
 def _default_example_path() -> Path:
-    return _repo_root() / "example_data" / "sine.csv"
+    return Path(__file__).parent / "example_data" / "sine.csv"
 
 
 @dataclass(slots=True)
@@ -42,7 +38,8 @@ def parse_cli_source_spec(arg: str) -> CliSourceSpec:
     raw = arg
     if ":" in arg:
         possible_name, remainder = arg.split(":", 1)
-        if possible_name and remainder:
+        is_windows_drive = len(possible_name) == 1 and possible_name.isalpha() and remainder.startswith(("\\", "/"))
+        if possible_name and remainder and not is_windows_drive:
             name = possible_name
             raw = remainder
 
@@ -176,9 +173,9 @@ def cli(
         raise click.ClickException(str(exc)) from exc
 
     final_output = output_path or (
-        (_repo_root() / "plots" / f"{loaded[0].source_path.stem}.html")
+        (Path.cwd() / "plots" / f"{loaded[0].source_path.stem}.html")
         if len(loaded) == 1
-        else (_repo_root() / "plots" / "combined.html")
+        else (Path.cwd() / "plots" / "combined.html")
     )
     title_parts = [dataset.legend_name for dataset in loaded] + [
         expr.legend_name for expr in expression_specs

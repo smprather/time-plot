@@ -12,7 +12,7 @@ from time_plot.example_data import write_example_data_files
 
 
 def main() -> None:
-    output_dir = REPO_ROOT / "example_data"
+    output_dir = REPO_ROOT / "time_plot" / "example_data"
     for path in write_example_data_files(output_dir):
         print(f"Wrote example CSV: {path}")
 

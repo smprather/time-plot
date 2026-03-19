@@ -13,7 +13,7 @@ def _repo_root() -> Path:
 
 
 def _plugin():
-    plugins = discover_plugins(_repo_root() / "plugins")
+    plugins = discover_plugins(_repo_root() / "time_plot" / "plugins")
     assert plugins, "expected at least one plugin"
     plugin = next((p for p in plugins if p.plugin_name == "spice-pwl"), None)
     assert plugin is not None, "spice-pwl plugin not found"
@@ -127,7 +127,7 @@ def test_parse_rejects_mixed_source_types(tmp_path: Path) -> None:
 
 
 def test_parse_example_file() -> None:
-    sample = _repo_root() / "example_data" / "spice_pwl.spi"
+    sample = _repo_root() / "time_plot" / "example_data" / "spice_pwl.spi"
     if not sample.exists():
         return
     plugin = _plugin()
@@ -142,6 +142,6 @@ def test_parse_example_file() -> None:
 def test_select_plugin_finds_spice_pwl(tmp_path: Path) -> None:
     spi = tmp_path / "test.spi"
     spi.write_text("v1 n1 0 pwl 0 0 1n 1\n", encoding="utf-8")
-    plugins = discover_plugins(_repo_root() / "plugins")
+    plugins = discover_plugins(_repo_root() / "time_plot" / "plugins")
     plugin = select_plugin(spi, plugins)
     assert plugin.plugin_name == "spice-pwl"

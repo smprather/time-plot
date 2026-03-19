@@ -14,7 +14,7 @@ def _repo_root() -> Path:
 def test_plot_command_supports_file_and_expression(tmp_path: Path) -> None:
     runner = CliRunner()
     output_html = tmp_path / "expr_plot.html"
-    sample_file = _repo_root() / "example_data" / "sine.csv"
+    sample_file = _repo_root() / "time_plot" / "example_data" / "sine.csv"
 
     result = runner.invoke(
         cli,
@@ -39,7 +39,7 @@ def test_plot_command_supports_file_and_expression(tmp_path: Path) -> None:
 
 def test_plot_command_reports_expression_errors(tmp_path: Path) -> None:
     runner = CliRunner()
-    sample_file = _repo_root() / "example_data" / "sine.csv"
+    sample_file = _repo_root() / "time_plot" / "example_data" / "sine.csv"
 
     result = runner.invoke(
         cli,
@@ -53,7 +53,7 @@ def test_plot_command_reports_expression_errors(tmp_path: Path) -> None:
 def test_plot_command_auto_names_expressions(tmp_path: Path) -> None:
     runner = CliRunner()
     output_html = tmp_path / "auto.html"
-    sample_file = _repo_root() / "example_data" / "sine.csv"
+    sample_file = _repo_root() / "time_plot" / "example_data" / "sine.csv"
 
     result = runner.invoke(
         cli,
@@ -74,7 +74,7 @@ def test_plot_command_auto_names_expressions(tmp_path: Path) -> None:
 def test_plot_command_expression_legend_with_user_name(tmp_path: Path) -> None:
     runner = CliRunner()
     output_html = tmp_path / "named.html"
-    sample_file = _repo_root() / "example_data" / "sine.csv"
+    sample_file = _repo_root() / "time_plot" / "example_data" / "sine.csv"
 
     result = runner.invoke(
         cli,

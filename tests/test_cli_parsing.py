@@ -15,6 +15,18 @@ def test_parse_cli_source_spec_file_and_named_file() -> None:
     assert named.raw == "/tmp/foo.csv"
 
 
+def test_parse_cli_source_spec_windows_absolute_path() -> None:
+    spec = parse_cli_source_spec(r"C:\Users\foo\sine.csv")
+    assert spec.kind == "file"
+    assert spec.name is None
+    assert spec.raw == r"C:\Users\foo\sine.csv"
+
+    spec_fwd = parse_cli_source_spec("C:/Users/foo/sine.csv")
+    assert spec_fwd.kind == "file"
+    assert spec_fwd.name is None
+    assert spec_fwd.raw == "C:/Users/foo/sine.csv"
+
+
 def test_parse_cli_source_spec_expression() -> None:
     spec = parse_cli_source_spec("sum:expr[f1+f2]")
     assert spec.kind == "expr"
