@@ -70,8 +70,8 @@ Quote expressions in the shell to avoid interpretation of `[` and `]`.
 
 ## Output
 
-- Default output path for a single input source: `./plots/<input-stem>.html`
-- Default output path for multiple sources: `./plots/combined.html`
+- Default output path for a single input file: `./plots/<input-stem>.html`
+- Default output path for multiple input files: `./plots/combined.html`
 - Plot HTML is self-contained (inlines `uPlot` JS/CSS assets) — works offline.
 - Interactive chart with mousewheel zoom.
 - Summary statistics table (`Peak |y|`, `Average`, `RMS`).
@@ -97,7 +97,7 @@ time(ns),voltage(mv)
 - Parses SPICE netlists containing `pwl` voltage or current sources.
 - Supports line continuations with leading `+`.
 - Each PWL source becomes one dataset.
-- Parser option `naming_method`: `element_name` (default) or `positive_node_name`.
+- Parser option `naming_method`: `element_name` (default, uses the SPICE element name, e.g. `vclk`) or `positive_node_name` (uses the positive terminal name, e.g. `clk`).
 
 ```bash
 time_plot spice_pwl.spi --parser-options naming_method=positive_node_name
@@ -120,6 +120,8 @@ Syntax: `expr[<expression>]` or `<name>:expr[<expression>]`
 References use dataset names (flat namespace, valid Python identifiers).
 
 Operators: `+`, `-`, `*`, `/`
+
+Numeric constants are supported (e.g., `expr[sine*2]`, `expr[sine+0.5]`).
 
 Functions:
 
