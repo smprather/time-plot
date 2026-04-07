@@ -23,6 +23,34 @@ _SPICE_SUFFIXES: dict[str, float] = {
 _SUFFIX_ORDER = sorted(_SPICE_SUFFIXES, key=len, reverse=True)
 
 
+def short_description() -> str:
+    return "SPICE netlist PWL voltage/current sources (.spi, .sp, .cir, .net, .spice)"
+
+
+def long_description() -> str:
+    return """\
+Plugin: spice-pwl
+Matches: .spi  .sp  .cir  .net  .spice
+
+Parses piecewise-linear (PWL) voltage and current source statements from SPICE
+netlists.  Each source becomes one series.
+
+Supported syntax (case-insensitive):
+  V<name> ... PWL( t0 v0  t1 v1 ... )
+  I<name> ... PWL( t0 i0  t1 i1 ... )
+
+Options (--parser-options key=value):
+  naming_method   Controls how the series name is derived from the source name.
+                  Values:
+                    auto      Strip leading V/I, use remainder (default)
+                    full      Keep full source name including V/I prefix
+                    instance  Use the instance name only
+
+Units: voltage sources → V, current sources → A.
+Time axis is always seconds.\
+"""
+
+
 def plugin_name() -> str:
     return "spice-pwl"
 
@@ -44,7 +72,7 @@ def identify(file_path: Path) -> bool:
     return False
 
 
-def parse(file_path: Path, options: dict[str, str] | None = None) -> list[SeriesData]:
+def parse(file_path: Path, options: dict[str, str] | None = None, selected: list[str] | None = None) -> list[SeriesData]:
     raw_lines = file_path.read_text(encoding="utf-8").splitlines()
     logical_lines = _aggregate_continuations(raw_lines)
     opts = options or {}

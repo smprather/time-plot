@@ -15,6 +15,32 @@ from time_plot.units import (
 )
 
 
+def short_description() -> str:
+    return "2-column CSV with header row: time(<unit>), voltage/current(<unit>)"
+
+
+def long_description() -> str:
+    return """\
+Plugin: voltage-or-current-vs-time
+Matches: any .csv file whose header row matches the expected format
+
+Parses 2-column CSV files where the first column is time and the second is a
+voltage or current signal.  The header row encodes units in parentheses.
+
+Expected header format:
+  time(<time_unit>),<signal_name>(<value_unit>)
+
+Examples:
+  time(ns),VDD(v)
+  time(s),IVDD(a)
+
+Supported time units: s, ms, us, ns, ps, fs
+Supported value units: v (volts), a (amps)
+
+The series name is taken from <signal_name> in the header.\
+"""
+
+
 def plugin_name() -> str:
     return "voltage-or-current-vs-time"
 
@@ -39,7 +65,7 @@ def identify(file_path: Path) -> bool:
     return names[0] == "time" and names[1] in {"voltage", "current"}
 
 
-def parse(file_path: Path, options: dict[str, str] | None = None) -> list[SeriesData]:
+def parse(file_path: Path, options: dict[str, str] | None = None, selected: list[str] | None = None) -> list[SeriesData]:
     times: list[float] = []
     values: list[float] = []
 

@@ -11,7 +11,8 @@ from time_plot.models import SeriesData
 
 
 IdentifyFn = Callable[[Path], bool]
-ParseFn = Callable[[Path, dict[str, str]], list[SeriesData]]
+ParseFn = Callable[[Path, dict[str, str], "list[str] | None"], list[SeriesData]]
+ListSeriesFn = Callable[[Path, dict[str, str]], list[str]]
 
 
 @dataclass(slots=True)
@@ -21,6 +22,9 @@ class ParserPlugin:
     identify: IdentifyFn
     parse: ParseFn
     path: Path
+    list_series: ListSeriesFn | None = None
+    short_description: str = ""
+    long_description: str = ""
 
 
 def discover_plugins(plugins_dir: Path) -> list[ParserPlugin]:
@@ -42,6 +46,22 @@ def discover_plugins(plugins_dir: Path) -> list[ParserPlugin]:
                 f"Skipping plugin {candidate.name}: {exc}",
                 file=sys.stderr,
             )
+    return plugins
+
+
+def discover_plugins_from_dirs(dirs: list[Path]) -> list[ParserPlugin]:
+    """Discover plugins from multiple directories in priority order.
+
+    Earlier dirs have higher precedence. If two dirs provide a plugin with the
+    same plugin_name, the one from the earlier dir is used.
+    """
+    seen_names: set[str] = set()
+    plugins: list[ParserPlugin] = []
+    for d in dirs:
+        for plugin in discover_plugins(d):
+            if plugin.plugin_name not in seen_names:
+                seen_names.add(plugin.plugin_name)
+                plugins.append(plugin)
     return plugins
 
 
@@ -77,6 +97,7 @@ def _plugin_from_module(module: ModuleType, path: Path) -> ParserPlugin:
     identify = getattr(module, "identify", None)
     parse = getattr(module, "parse", None)
     plugin_name_fn = getattr(module, "plugin_name", None)
+    list_series_fn = getattr(module, "list_series", None)
 
     if not callable(identify):
         msg = "missing callable identify(path) -> bool"
@@ -89,12 +110,18 @@ def _plugin_from_module(module: ModuleType, path: Path) -> ParserPlugin:
     else:
         plugin_name = path.stem
 
+    short_desc_fn = getattr(module, "short_description", None)
+    long_desc_fn = getattr(module, "long_description", None)
+
     return ParserPlugin(
         module_name=module.__name__,
         plugin_name=plugin_name,
         identify=identify,
         parse=parse,
         path=path,
+        list_series=list_series_fn if callable(list_series_fn) else None,
+        short_description=str(short_desc_fn()) if callable(short_desc_fn) else "",
+        long_description=str(long_desc_fn()) if callable(long_desc_fn) else "",
     )
 
 

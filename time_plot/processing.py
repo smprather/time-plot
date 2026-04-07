@@ -1,38 +1,49 @@
+"""Core data pipeline: load files, build series registry, align, evaluate expressions."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+import fnmatch
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
-import ast
 
 import numpy as np
 
+from time_plot.expr_parser import (
+    EvalResult,
+    evaluate,
+    parse_expr_def,
+)
 from time_plot.models import SeriesData
 from time_plot.plugin_system import ParserPlugin, select_plugin
 
 
+# ---------------------------------------------------------------------------
+# Public data structures
+# ---------------------------------------------------------------------------
+
 @dataclass(slots=True)
-class InputFileSpec:
-    arg_position: int
-    path: Path
-    data_source_name: str
-    cli_name: str | None = None
+class FileGroup:
+    """A set of source files sharing the same filter."""
+    files: list[Path]
+    glob_filter: str | None = None    # from -F; None means '*' (all)
+    regex_filter: str | None = None   # from -R
 
 
 @dataclass(slots=True)
-class LoadedDataset:
-    dataset_name: str
-    legend_name: str
-    source_path: Path
-    plugin_name: str
-    series: SeriesData
+class ExpressionDef:
+    """A named expression from -e 'name=expr'."""
+    name: str
+    expr_text: str
 
 
 @dataclass(slots=True)
 class AlignedTrace:
-    dataset_name: str
-    legend_name: str
-    source_name: str
-    source_path: Path | None
+    """A single time-series after alignment to the global x-grid."""
+    registry_key: str           # realpath|series_name
+    legend_name: str            # display name
+    source_name: str            # plugin source_name or 'expr[...]'
+    source_path: Path | None    # None for expression results
     y_label: str
     y_unit: str
     y_unit_label: str
@@ -48,164 +59,335 @@ class AlignedPlotData:
     x_display_prefix: str | None = None
 
 
-@dataclass(slots=True)
-class ExpressionSpec:
-    arg_position: int
-    dataset_name: str
-    legend_name: str
-    expression_text: str
+# ---------------------------------------------------------------------------
+# Series registry
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _RegistryEntry:
+    series: SeriesData
+    source_path: Path
+    plugin_name: str
 
 
-def load_input_files(
-    input_files: list[InputFileSpec],
+def _registry_key(path: Path, series_name: str) -> str:
+    return f"{path.resolve()}|{series_name}"
+
+
+# ---------------------------------------------------------------------------
+# Loading
+# ---------------------------------------------------------------------------
+
+def list_series_for_groups(
+    groups: list[FileGroup],
     plugins: list[ParserPlugin],
     parser_options: dict[str, str] | None = None,
-) -> list[LoadedDataset]:
+    case_insensitive: bool = False,
+) -> dict[Path, list[str]]:
+    """Return filtered series names per file without loading data.
+
+    For plugins that implement list_series, the listing is cheap (no data load).
+    For plugins that don't, parse() is called with selected=None and names are
+    collected from the returned SeriesData objects.
+    """
     opts = parser_options or {}
+    result: dict[Path, list[str]] = {}
 
-    # Phase 1: Parse all files and collect raw data_set names per source.
-    raw_entries: list[tuple[InputFileSpec, str, SeriesData, str]] = []  # (spec, plugin_name, series, raw_name)
-    for spec in input_files:
-        plugin = select_plugin(spec.path, plugins)
-        series_list = plugin.parse(spec.path, opts)
-        for series in series_list:
-            if len(series_list) == 1:
-                raw_name = spec.data_source_name
+    for group in groups:
+        for file_path in group.files:
+            plugin = select_plugin(file_path, plugins)
+            if plugin.list_series is not None:
+                all_names = plugin.list_series(file_path, opts)
             else:
-                raw_name = series.name
-            raw_entries.append((spec, plugin.plugin_name, series, raw_name))
+                series_list = plugin.parse(file_path, opts, None)
+                all_names = [s.name for s in series_list]
 
-    # Phase 2: Detect raw name conflicts and auto-prefix with data_source_name__
-    # when needed.  Single-series sources use data_source_name directly (which is
-    # already unique).  Multi-series entries that collide get prefixed.
-    name_counts: dict[str, int] = {}
-    for _, _, _, raw_name in raw_entries:
-        name_counts[raw_name] = name_counts.get(raw_name, 0) + 1
+            filtered = _apply_filter(all_names, group, case_insensitive=case_insensitive)
+            result[file_path] = filtered
 
-    seen: set[str] = set()
-    loaded: list[LoadedDataset] = []
-    for spec, plugin_name, series, raw_name in raw_entries:
-        if name_counts[raw_name] > 1:
-            dataset_name = f"{spec.data_source_name}__{raw_name}"
+    return result
+
+
+def load_file_groups(
+    groups: list[FileGroup],
+    plugins: list[ParserPlugin],
+    parser_options: dict[str, str] | None = None,
+    case_insensitive: bool = False,
+) -> dict[str, _RegistryEntry]:
+    """Load all files from all groups, applying filters, and return the series registry."""
+    opts = parser_options or {}
+    registry: dict[str, _RegistryEntry] = {}
+
+    for group in groups:
+        for file_path in group.files:
+            plugin = select_plugin(file_path, plugins)
+            selected = _select_series(file_path, plugin, opts, group, case_insensitive=case_insensitive)
+            series_list = plugin.parse(file_path, opts, selected)
+            for series in series_list:
+                key = _registry_key(file_path, series.name)
+                if key in registry:
+                    raise ValueError(
+                        f"Duplicate series key in registry: {key!r}"
+                    )
+                registry[key] = _RegistryEntry(
+                    series=series,
+                    source_path=file_path,
+                    plugin_name=plugin.plugin_name,
+                )
+
+    return registry
+
+
+def _select_series(
+    file_path: Path,
+    plugin: ParserPlugin,
+    opts: dict[str, str],
+    group: FileGroup,
+    case_insensitive: bool = False,
+) -> list[str] | None:
+    """Return the list of series names to extract, or None to load all."""
+    has_filter = group.glob_filter is not None or group.regex_filter is not None
+    if not has_filter:
+        # No filter — plugins without list_series load everything
+        return None
+
+    if plugin.list_series is None:
+        # Plugin can't enumerate series; load all and filter post-parse.
+        # Caller (_load_with_filter) handles post-parse filtering.
+        return None
+
+    all_names = plugin.list_series(file_path, opts)
+    return _apply_filter(all_names, group, case_insensitive=case_insensitive)
+
+
+def _apply_filter(names: list[str], group: FileGroup, case_insensitive: bool = False) -> list[str]:
+    result = names
+    if group.glob_filter is not None:
+        pat = _glob_to_match_pattern(group.glob_filter)
+        if case_insensitive:
+            result = [n for n in result if fnmatch.fnmatch(n.lower(), pat.lower())]
         else:
-            dataset_name = raw_name
-
-        if dataset_name in seen:
-            msg = f"Duplicate dataset name: {dataset_name}"
-            raise ValueError(msg)
-        seen.add(dataset_name)
-
-        legend_name = _legend_name(spec, series)
-        loaded.append(
-            LoadedDataset(
-                dataset_name=dataset_name,
-                legend_name=legend_name,
-                source_path=spec.path,
-                plugin_name=plugin_name,
-                series=series,
-            ),
-        )
-    return loaded
+            result = [n for n in result if fnmatch.fnmatch(n, pat)]
+    if group.regex_filter is not None:
+        flags = re.IGNORECASE if case_insensitive else 0
+        rx = re.compile(group.regex_filter, flags)
+        result = [n for n in result if rx.search(n)]
+    return result
 
 
-def align_loaded_datasets(datasets: list[LoadedDataset]) -> AlignedPlotData:
-    if not datasets:
-        msg = "No datasets to align"
-        raise ValueError(msg)
+def _glob_to_match_pattern(pat: str) -> str:
+    """If pattern has no glob chars, treat as *pat* (substring)."""
+    if not any(c in pat for c in "*?[]"):
+        return f"*{pat}*"
+    return pat
 
-    for dataset in datasets:
-        _validate_strictly_increasing_x(dataset.series.x, dataset.source_path)
 
-    x_arrays = [dataset.series.x for dataset in datasets]
+# ---------------------------------------------------------------------------
+# Alignment
+# ---------------------------------------------------------------------------
+
+def align_registry(
+    registry: dict[str, _RegistryEntry],
+) -> AlignedPlotData:
+    """Align all registry entries to a common x-grid."""
+    if not registry:
+        raise ValueError("No series loaded")
+
+    entries = list(registry.items())
+    series_list = [e.series for _, e in entries]
+
+    for key, entry in entries:
+        _validate_strictly_increasing_x(entry.series.x, entry.source_path)
+
+    x_arrays = [s.x for s in series_list]
     dt = _smallest_positive_dx(x_arrays)
     x_min = min(float(arr[0]) for arr in x_arrays)
     x_max = max(float(arr[-1]) for arr in x_arrays)
     x_grid = _uniform_grid(x_min, x_max, dt)
 
     traces: list[AlignedTrace] = []
-    for dataset in datasets:
-        y_grid = _interpolate_onto_grid(dataset.series.x, dataset.series.y, x_grid)
-        traces.append(
-            AlignedTrace(
-                dataset_name=dataset.dataset_name,
-                legend_name=dataset.legend_name,
-                source_name=dataset.series.source_name,
-                source_path=dataset.source_path,
-                y_label=dataset.series.y_label,
-                y_unit=dataset.series.y_unit,
-                y_unit_label=dataset.series.y_unit_label,
-                y=y_grid,
-                y_display_prefix=dataset.series.y_display_prefix,
-            ),
-        )
+    for key, entry in entries:
+        s = entry.series
+        y_grid = _interpolate_onto_grid(s.x, s.y, x_grid)
+        traces.append(AlignedTrace(
+            registry_key=key,
+            legend_name=s.name,
+            source_name=s.source_name,
+            source_path=entry.source_path,
+            y_label=s.y_label,
+            y_unit=s.y_unit,
+            y_unit_label=s.y_unit_label,
+            y=y_grid,
+            y_display_prefix=s.y_display_prefix,
+        ))
 
-    y_units = {trace.y_unit for trace in traces}
+    y_units = {t.y_unit for t in traces}
     if len(y_units) > 2:
-        msg = "At most two distinct y-axis units are supported."
-        raise ValueError(msg)
+        raise ValueError("At most two distinct y-axis units are supported.")
 
     return AlignedPlotData(
         x_seconds=x_grid,
         traces=traces,
         x_timestep_seconds=dt,
-        x_display_prefix=datasets[0].series.x_display_prefix,
+        x_display_prefix=series_list[0].x_display_prefix if series_list else None,
     )
 
 
+# ---------------------------------------------------------------------------
+# Expression evaluation
+# ---------------------------------------------------------------------------
+
 def evaluate_expressions(
-    base_plot_data: AlignedPlotData,
-    expressions: list[ExpressionSpec],
+    aligned: AlignedPlotData,
+    expr_defs: list[ExpressionDef],
+    registry: dict[str, _RegistryEntry],
 ) -> list[AlignedTrace]:
-    if not expressions:
+    """Evaluate named expressions and return new AlignedTraces."""
+    if not expr_defs:
         return []
 
-    if not base_plot_data.traces:
-        msg = "Expressions require at least one file-backed dataset."
-        raise ValueError(msg)
+    x = aligned.x_seconds
 
-    values_by_name: dict[str, np.ndarray] = {}
-    trace_meta_by_name: dict[str, AlignedTrace] = {}
-    for trace in base_plot_data.traces:
-        values_by_name[trace.dataset_name] = trace.y.copy()
-        trace_meta_by_name[trace.dataset_name] = trace
+    # Build lookup maps from registry keys
+    trace_by_key: dict[str, AlignedTrace] = {t.registry_key: t for t in aligned.traces}
 
-    for expr in expressions:
-        if expr.dataset_name in values_by_name:
-            msg = f"Duplicate dataset name: {expr.dataset_name}"
-            raise ValueError(msg)
-
-    expr_by_name: dict[str, ExpressionSpec] = {}
-    for expr in expressions:
-        if expr.dataset_name in expr_by_name:
-            msg = f"Duplicate dataset name: {expr.dataset_name}"
-            raise ValueError(msg)
-        expr_by_name[expr.dataset_name] = expr
-    _validate_expression_names(expr_by_name, values_by_name.keys())
-    eval_order = _expression_eval_order(expr_by_name, set(values_by_name))
+    # Expression namespace: name → EvalResult (checked before registry)
+    expr_ns: dict[str, EvalResult] = {}
 
     produced: list[AlignedTrace] = []
-    for name in eval_order:
-        expr = expr_by_name[name]
-        result_values, result_meta = _eval_expression(
-            expr.expression_text,
-            x_seconds=base_plot_data.x_seconds,
-            values_by_name=values_by_name,
-            trace_meta_by_name=trace_meta_by_name,
-        )
-        values_by_name[name] = result_values
-        trace_meta = AlignedTrace(
-            dataset_name=expr.dataset_name,
-            legend_name=expr.legend_name,
-            source_name=f"expr[{expr.expression_text}]",
-            source_path=None,
-            y_label=result_meta.y_label,
-            y_unit=result_meta.y_unit,
-            y_unit_label=result_meta.y_unit_label,
-            y=result_values,
-            y_display_prefix=None,
-        )
-        trace_meta_by_name[name] = trace_meta
-        produced.append(trace_meta)
+
+    for expr_def in expr_defs:
+        name = expr_def.name
+        if name in expr_ns:
+            raise ValueError(f"Duplicate expression name: {name!r}")
+
+        _, ast = parse_expr_def(f"{name}={expr_def.expr_text}")
+
+        def make_resolve(
+            trace_by_key: dict[str, AlignedTrace] = trace_by_key,
+            expr_ns: dict[str, EvalResult] = expr_ns,
+            registry: dict[str, _RegistryEntry] = registry,
+        ):
+            def resolve(a_pat: str | None, b_pat: str, context: str) -> ExprResult:
+                # 1. Check expression namespace first (exact name match on b_pat)
+                if a_pat is None and b_pat in expr_ns and not any(c in b_pat for c in "*?[]"):
+                    return expr_ns[b_pat]
+
+                # 2. Pattern-match against registry keys
+                a_match = _glob_to_match_pattern(a_pat) if a_pat is not None else "*"
+                b_match = _glob_to_match_pattern(b_pat)
+
+                matches: list[tuple[str, AlignedTrace]] = []
+                for key, trace in trace_by_key.items():
+                    realpath_str, series_name = key.rsplit("|", 1)
+                    file_base = Path(realpath_str).name
+                    if fnmatch.fnmatch(file_base, a_match) and fnmatch.fnmatch(series_name, b_match):
+                        matches.append((key, trace))
+
+                if context == "scalar":
+                    if len(matches) == 0:
+                        raise ValueError(
+                            f"Series reference {_fmt_ref(a_pat, b_pat)!r} matched no loaded series"
+                        )
+                    if len(matches) > 1:
+                        names = ", ".join(k for k, _ in matches)
+                        raise ValueError(
+                            f"Series reference {_fmt_ref(a_pat, b_pat)!r} is ambiguous — "
+                            f"matched {len(matches)} series: {names}"
+                        )
+                    t = matches[0][1]
+                    return EvalResult(value=t.y, y_unit=t.y_unit, y_unit_label=t.y_unit_label, y_label=t.y_label)
+
+                # array context
+                if not matches:
+                    # Return an EvalResult with empty list — unit unknown
+                    return EvalResult(value=[], y_unit="?", y_unit_label="", y_label=b_pat)
+                # Infer unit from first match
+                first = matches[0][1]
+                return EvalResult(
+                    value=[t.y for _, t in matches],
+                    y_unit=first.y_unit,
+                    y_unit_label=first.y_unit_label,
+                    y_label=b_pat,
+                )
+
+            return resolve
+
+        result = evaluate(ast, make_resolve(), x)
+
+        # Expand scalar (float) to horizontal line
+        val = result.value
+        if isinstance(val, float):
+            if not np.isfinite(val):
+                arr = np.full_like(x, np.nan, dtype=np.float64)
+            else:
+                arr = np.full_like(x, val, dtype=np.float64)
+            expr_ns[name] = EvalResult(
+                value=arr,
+                y_unit=result.y_unit,
+                y_unit_label=result.y_unit_label,
+                y_label=result.y_label or name,
+            )
+            produced.append(AlignedTrace(
+                registry_key=f"expr|{name}",
+                legend_name=name,
+                source_name=f"expr[{expr_def.expr_text}]",
+                source_path=None,
+                y_label=result.y_label or name,
+                y_unit=result.y_unit,
+                y_unit_label=result.y_unit_label,
+                y=arr,
+            ))
+
+        elif isinstance(val, np.ndarray):
+            expr_ns[name] = EvalResult(
+                value=val,
+                y_unit=result.y_unit,
+                y_unit_label=result.y_unit_label,
+                y_label=result.y_label or name,
+            )
+            produced.append(AlignedTrace(
+                registry_key=f"expr|{name}",
+                legend_name=name,
+                source_name=f"expr[{expr_def.expr_text}]",
+                source_path=None,
+                y_label=result.y_label or name,
+                y_unit=result.y_unit,
+                y_unit_label=result.y_unit_label,
+                y=val,
+            ))
+
+        elif isinstance(val, list):
+            # Array-of-series: named name|1, name|2, ...
+            sub_results: list[EvalResult] = []
+            for i, sub_arr in enumerate(val, start=1):
+                sub_name = f"{name}|{i}"
+                sub_arr_np = np.asarray(sub_arr, dtype=np.float64)
+                sub_er = EvalResult(
+                    value=sub_arr_np,
+                    y_unit=result.y_unit,
+                    y_unit_label=result.y_unit_label,
+                    y_label=f"{name}|{i}",
+                )
+                sub_results.append(sub_er)
+                expr_ns[sub_name] = sub_er
+                produced.append(AlignedTrace(
+                    registry_key=f"expr|{sub_name}",
+                    legend_name=sub_name,
+                    source_name=f"expr[{expr_def.expr_text}]",
+                    source_path=None,
+                    y_label=f"{name}|{i}",
+                    y_unit=result.y_unit,
+                    y_unit_label=result.y_unit_label,
+                    y=sub_arr_np,
+                ))
+            # Also store the whole array in expr_ns under the bare name
+            expr_ns[name] = EvalResult(
+                value=[er.value for er in sub_results],
+                y_unit=result.y_unit,
+                y_unit_label=result.y_unit_label,
+                y_label=name,
+            )
 
     return produced
 
@@ -216,32 +398,26 @@ def combine_plot_data(
 ) -> AlignedPlotData:
     if not expression_traces:
         return aligned_files
+    all_traces = [*aligned_files.traces, *expression_traces]
+    y_units = {t.y_unit for t in all_traces}
+    if len(y_units) > 2:
+        raise ValueError("At most two distinct y-axis units are supported.")
     return AlignedPlotData(
         x_seconds=aligned_files.x_seconds,
-        traces=[*aligned_files.traces, *expression_traces],
+        traces=all_traces,
         x_timestep_seconds=aligned_files.x_timestep_seconds,
         x_display_prefix=aligned_files.x_display_prefix,
     )
 
 
-def _legend_name(spec: InputFileSpec, series: SeriesData) -> str:
-    if spec.cli_name:
-        return spec.cli_name
-    if series.name:
-        return series.name
-    if spec.path.name:
-        return spec.path.stem
-    return spec.data_source_name
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-
-def expression_legend_name(dataset_name: str, expression_text: str) -> str:
-    import re
-
-    compact = expression_text.replace(" ", "")
-    # Auto-generated names match eN pattern.
-    if re.fullmatch(r"e\d+", dataset_name):
-        return compact
-    return f"{dataset_name}:{compact}"
+def _fmt_ref(a: str | None, b: str) -> str:
+    if a is None:
+        return b
+    return f"{a}|{b}"
 
 
 def _validate_strictly_increasing_x(x: np.ndarray, source_path: Path) -> None:
@@ -249,11 +425,9 @@ def _validate_strictly_increasing_x(x: np.ndarray, source_path: Path) -> None:
     if diffs.size == 0:
         return
     if np.any(~np.isfinite(x)):
-        msg = f"Non-finite x-axis values in {source_path}"
-        raise ValueError(msg)
+        raise ValueError(f"Non-finite x-axis values in {source_path}")
     if np.any(diffs <= 0):
-        msg = f"x-axis data must be strictly increasing in {source_path}"
-        raise ValueError(msg)
+        raise ValueError(f"x-axis data must be strictly increasing in {source_path}")
 
 
 def _smallest_positive_dx(x_arrays: list[np.ndarray]) -> float:
@@ -264,21 +438,16 @@ def _smallest_positive_dx(x_arrays: list[np.ndarray]) -> float:
         if positive.size:
             mins.append(float(np.min(positive)))
     if not mins:
-        msg = "Could not determine global x-axis timestep"
-        raise ValueError(msg)
+        raise ValueError("Could not determine global x-axis timestep")
     return min(mins)
 
 
 def _uniform_grid(x_min: float, x_max: float, dt: float) -> np.ndarray:
     if dt <= 0:
-        msg = "Global timestep must be > 0"
-        raise ValueError(msg)
+        raise ValueError("Global timestep must be > 0")
     span = x_max - x_min
     if span < 0:
-        msg = "x_max must be >= x_min"
-        raise ValueError(msg)
-
-    # Deterministic grid anchored at global minimum x using the smallest source dx.
+        raise ValueError("x_max must be >= x_min")
     ratio = span / dt if dt else 0.0
     steps = max(0, int(np.floor(ratio + 1e-12)))
     grid = x_min + (np.arange(steps + 1, dtype=np.float64) * dt)
@@ -293,267 +462,8 @@ def _interpolate_onto_grid(x: np.ndarray, y: np.ndarray, x_grid: np.ndarray) -> 
     y_grid = np.full_like(x_grid, np.nan, dtype=np.float64)
     if x.size == 0:
         return y_grid
-
     tol = max(float(np.min(np.diff(x))) * 1e-6 if x.size > 1 else 0.0, 1e-15)
     mask = (x_grid >= (x[0] - tol)) & (x_grid <= (x[-1] + tol))
     if np.any(mask):
         y_grid[mask] = np.interp(x_grid[mask], x, y).astype(np.float64)
     return y_grid
-
-
-@dataclass(slots=True)
-class _ExprValue:
-    values: np.ndarray
-    finite_mask: np.ndarray
-    y_label: str
-    y_unit: str
-    y_unit_label: str
-
-
-def _validate_expression_names(
-    expr_by_name: dict[str, ExpressionSpec],
-    base_names: object,
-) -> None:
-    base_name_set = set(base_names)
-    for expr in expr_by_name.values():
-        if not expr.dataset_name.isidentifier():
-            msg = f"Invalid dataset name for expression: {expr.dataset_name}"
-            raise ValueError(msg)
-        if expr.dataset_name in base_name_set:
-            msg = f"Duplicate dataset name: {expr.dataset_name}"
-            raise ValueError(msg)
-
-
-def _expression_eval_order(
-    expr_by_name: dict[str, ExpressionSpec],
-    base_names: set[str],
-) -> list[str]:
-    visiting: set[str] = set()
-    visited: set[str] = set()
-    order: list[str] = []
-
-    refs_cache: dict[str, set[str]] = {}
-
-    def refs_for(name: str) -> set[str]:
-        if name not in refs_cache:
-            refs_cache[name] = _referenced_names(expr_by_name[name].expression_text)
-        return refs_cache[name]
-
-    def visit(name: str) -> None:
-        if name in visited:
-            return
-        if name in visiting:
-            msg = f"Circular expression reference detected involving {name}"
-            raise ValueError(msg)
-        visiting.add(name)
-        for ref in refs_for(name):
-            if ref in expr_by_name:
-                visit(ref)
-            elif ref not in base_names:
-                msg = f"Unknown dataset referenced in expression {name}: {ref}"
-                raise ValueError(msg)
-        visiting.remove(name)
-        visited.add(name)
-        order.append(name)
-
-    for name in expr_by_name:
-        visit(name)
-    return order
-
-
-def _referenced_names(expression_text: str) -> set[str]:
-    root = ast.parse(expression_text, mode="eval")
-    refs: set[str] = set()
-
-    class Visitor(ast.NodeVisitor):
-        def visit_Name(self, node: ast.Name) -> None:  # noqa: N802
-            refs.add(node.id)
-
-        def visit_Call(self, node: ast.Call) -> None:  # noqa: N802
-            if not isinstance(node.func, ast.Name):
-                msg = "Unsupported function syntax in expression"
-                raise ValueError(msg)
-            self.generic_visit(node)
-
-    Visitor().visit(root)
-    return refs - {"average", "rms", "abs", "ddt"}
-
-
-def _eval_expression(
-    expression_text: str,
-    *,
-    x_seconds: np.ndarray,
-    values_by_name: dict[str, np.ndarray],
-    trace_meta_by_name: dict[str, AlignedTrace],
-) -> tuple[np.ndarray, _ExprValue]:
-    root = ast.parse(expression_text, mode="eval")
-    try:
-        value = _eval_expr_node(root.body, x_seconds, values_by_name, trace_meta_by_name)
-    except ValueError as exc:
-        msg = f"{exc} in expression: {expression_text}"
-        raise ValueError(msg) from None
-    output = value.values.copy()
-    output[~value.finite_mask] = np.nan
-    return output, _ExprValue(
-        values=output,
-        finite_mask=value.finite_mask,
-        y_label=value.y_label,
-        y_unit=value.y_unit,
-        y_unit_label=value.y_unit_label,
-    )
-
-
-def _eval_expr_node(
-    node: ast.AST,
-    x_seconds: np.ndarray,
-    values_by_name: dict[str, np.ndarray],
-    trace_meta_by_name: dict[str, AlignedTrace],
-) -> _ExprValue:
-    if isinstance(node, ast.Name):
-        if node.id not in values_by_name:
-            msg = f"Unknown dataset: {node.id}"
-            raise ValueError(msg)
-        arr = values_by_name[node.id]
-        trace = trace_meta_by_name[node.id]
-        finite = np.isfinite(arr)
-        return _ExprValue(
-            values=arr.copy(),
-            finite_mask=finite,
-            y_label=trace.y_label,
-            y_unit=trace.y_unit,
-            y_unit_label=trace.y_unit_label,
-        )
-
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        arr = np.full_like(x_seconds, float(node.value), dtype=np.float64)
-        return _ExprValue(
-            values=arr,
-            finite_mask=np.ones_like(arr, dtype=bool),
-            y_label="Expression",
-            y_unit="1",
-            y_unit_label="1",
-        )
-
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        inner = _eval_expr_node(node.operand, x_seconds, values_by_name, trace_meta_by_name)
-        values = inner.values if isinstance(node.op, ast.UAdd) else -inner.values
-        return _ExprValue(values=values, finite_mask=inner.finite_mask.copy(), y_label=inner.y_label, y_unit=inner.y_unit, y_unit_label=inner.y_unit_label)
-
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
-        left = _eval_expr_node(node.left, x_seconds, values_by_name, trace_meta_by_name)
-        right = _eval_expr_node(node.right, x_seconds, values_by_name, trace_meta_by_name)
-        mask = left.finite_mask & right.finite_mask
-        values = np.full_like(x_seconds, np.nan, dtype=np.float64)
-        left_v = np.where(mask, left.values, np.nan)
-        right_v = np.where(mask, right.values, np.nan)
-        if isinstance(node.op, ast.Add):
-            if left.y_unit != right.y_unit:
-                msg = f"Cannot add datasets with different units: {left.y_unit} and {right.y_unit}"
-                raise ValueError(msg)
-            values = left_v + right_v
-            y_label, y_unit, y_unit_label = left.y_label, left.y_unit, left.y_unit_label
-        elif isinstance(node.op, ast.Sub):
-            if left.y_unit != right.y_unit:
-                msg = f"Cannot subtract datasets with different units: {left.y_unit} and {right.y_unit}"
-                raise ValueError(msg)
-            values = left_v - right_v
-            y_label, y_unit, y_unit_label = left.y_label, left.y_unit, left.y_unit_label
-        elif isinstance(node.op, ast.Mult):
-            values = left_v * right_v
-            y_unit = _combine_units_mul(left.y_unit, right.y_unit)
-            y_label = "Expression"
-            y_unit_label = _derive_unit_label(y_unit, left, right)
-        else:
-            with np.errstate(divide="ignore", invalid="ignore"):
-                values = left_v / right_v
-            mask = mask & np.isfinite(values)
-            y_unit = _combine_units_div(left.y_unit, right.y_unit)
-            y_label = "Expression"
-            y_unit_label = _derive_unit_label(y_unit, left, right)
-        values[~mask] = np.nan
-        return _ExprValue(values=values, finite_mask=mask, y_label=y_label, y_unit=y_unit, y_unit_label=y_unit_label)
-
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        fn_name = node.func.id
-        if len(node.args) != 1:
-            msg = f"Function {fn_name}() expects exactly one argument"
-            raise ValueError(msg)
-        arg = _eval_expr_node(node.args[0], x_seconds, values_by_name, trace_meta_by_name)
-        if fn_name == "average":
-            finite_vals = arg.values[arg.finite_mask]
-            mean_val = float(np.mean(finite_vals)) if finite_vals.size else np.nan
-            values = np.full_like(x_seconds, np.nan, dtype=np.float64)
-            values[arg.finite_mask] = mean_val
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit, y_unit_label=arg.y_unit_label)
-        if fn_name == "rms":
-            finite_vals = arg.values[arg.finite_mask]
-            rms_val = float(np.sqrt(np.mean(finite_vals**2))) if finite_vals.size else np.nan
-            values = np.full_like(x_seconds, np.nan, dtype=np.float64)
-            values[arg.finite_mask] = rms_val
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit, y_unit_label=arg.y_unit_label)
-        if fn_name == "abs":
-            values = np.full_like(x_seconds, np.nan, dtype=np.float64)
-            values[arg.finite_mask] = np.abs(arg.values[arg.finite_mask])
-            return _ExprValue(values=values, finite_mask=arg.finite_mask.copy(), y_label=arg.y_label, y_unit=arg.y_unit, y_unit_label=arg.y_unit_label)
-        if fn_name == "ddt":
-            ddt_unit = _ddt_unit(arg.y_unit)
-            values, mask = _ddt(arg.values, arg.finite_mask, x_seconds)
-            return _ExprValue(values=values, finite_mask=mask, y_label=arg.y_label, y_unit=ddt_unit, y_unit_label=ddt_unit)
-        msg = f"Unsupported function in expression: {fn_name}"
-        raise ValueError(msg)
-
-    msg = "Unsupported expression syntax"
-    raise ValueError(msg)
-
-
-def _ddt(values: np.ndarray, finite_mask: np.ndarray, x_seconds: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    out = np.full_like(values, np.nan, dtype=np.float64)
-    mask = np.zeros_like(finite_mask, dtype=bool)
-    if values.size < 2:
-        return out, mask
-    dx = np.diff(x_seconds)
-    valid_pairs = finite_mask[:-1] & finite_mask[1:] & (dx > 0)
-    deriv = np.full(values.size - 1, np.nan, dtype=np.float64)
-    deriv[valid_pairs] = (values[1:][valid_pairs] - values[:-1][valid_pairs]) / dx[valid_pairs]
-    out[1:] = deriv
-    mask[1:] = valid_pairs
-    # First point equals second point when available.
-    if mask.size > 1 and mask[1]:
-        out[0] = out[1]
-        mask[0] = True
-    return out, mask
-
-
-def _ddt_unit(unit: str) -> str:
-    if unit in {"", "1"}:
-        return "1/s"
-    return f"{unit}/s"
-
-
-def _derive_unit_label(result_unit: str, left: _ExprValue, right: _ExprValue) -> str:
-    """Pick the best y_unit_label for a composed unit.
-
-    If the result unit matches one of the operand units, reuse that operand's
-    label (e.g. ``v * 1 → "Voltage"``).  Otherwise fall back to the unit string.
-    """
-    if result_unit == left.y_unit:
-        return left.y_unit_label
-    if result_unit == right.y_unit:
-        return right.y_unit_label
-    return result_unit
-
-
-def _combine_units_mul(left: str, right: str) -> str:
-    if left == "1":
-        return right
-    if right == "1":
-        return left
-    return f"{left}*{right}"
-
-
-def _combine_units_div(left: str, right: str) -> str:
-    if right == "1":
-        return left
-    if left == "1":
-        return f"1/{right}"
-    return f"{left}/{right}"

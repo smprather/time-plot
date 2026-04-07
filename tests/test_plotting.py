@@ -13,7 +13,7 @@ def test_write_multi_html_assigns_secondary_axis_for_second_y_unit(tmp_path: Pat
         x_seconds=np.asarray([0.0, 1e-6, 2e-6]),
         traces=[
             AlignedTrace(
-                dataset_name="f1",
+                registry_key="f1",
                 legend_name="Voltage",
                 source_name="voltage",
                 source_path=None,
@@ -23,7 +23,7 @@ def test_write_multi_html_assigns_secondary_axis_for_second_y_unit(tmp_path: Pat
                 y=np.asarray([0.0, 1.0, 0.0]),
             ),
             AlignedTrace(
-                dataset_name="f2",
+                registry_key="f2",
                 legend_name="Rate",
                 source_name="rate",
                 source_path=None,

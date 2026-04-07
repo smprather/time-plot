@@ -36,7 +36,7 @@ def _uplot_inline_assets() -> tuple[str, str, str]:
 
 def write_html(series: SeriesData, output_path: Path) -> Path:
     trace = AlignedTrace(
-        dataset_name="f1",
+        registry_key="f1",
         legend_name=series.y_label,
         source_name=series.source_name,
         source_path=None,
@@ -109,6 +109,7 @@ def write_multi_html(
             "label": legend_names[i],
             "stroke": _PALETTE[i % len(_PALETTE)],
             "width": 2,
+            "alpha": 0.3,
         }
         if secondary_unit and trace.y_unit == secondary_unit:
             cfg["scale"] = "y2"
@@ -252,6 +253,20 @@ def _render_multi_html(
     #plot {{
       width: 100%;
       min-height: 560px;
+      position: relative;
+    }}
+    #focused-label {{
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0,0,0,0.65);
+      color: #fff;
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      white-space: nowrap;
+      display: none;
     }}
     .meta {{
       margin: 0 0 12px 0;
@@ -287,7 +302,9 @@ def _render_multi_html(
     <div class="wrap">
       <div class="card">
       <p class="meta">Left-mouse double-click to zoom full</p>
-      <div id="plot" aria-label="Time series plot"></div>
+      <div id="plot" aria-label="Time series plot">
+        <div id="focused-label"></div>
+      </div>
       <table class="summary">
         <thead>
           <tr><th>Label</th><th>{html.escape(table_headers["peak_abs"])}</th><th>{html.escape(table_headers["average"])}</th><th>{html.escape(table_headers["rms"])}</th></tr>
@@ -332,11 +349,26 @@ def _render_multi_html(
             y: true,
             uni: 50,
             setScale: true
+          }},
+          focus: {{
+            prox: 30
           }}
         }},
         plugins: [
           wheelZoomPlugin({{ factor: 0.75 }})
-        ]
+        ],
+        hooks: {{
+          setSeries: [function(u, i, opts) {{
+            if (!opts.focus) return;
+            const el = document.getElementById("focused-label");
+            if (i == null) {{
+              el.style.display = "none";
+            }} else {{
+              el.textContent = u.series[i].label;
+              el.style.display = "block";
+            }}
+          }}]
+        }}
       }};
 
       const uplot = new uPlot(opts, data, plotEl);
