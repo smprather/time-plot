@@ -5,10 +5,12 @@ Plot arbitrary time-series data (non-calendar x-axis) into self-contained HTML u
 ## What It Does
 
 - Loads one or more input files via auto-discovered parser plugins.
+- Filters series by glob (`-F`) or regex (`-R`) patterns.
 - Converts all data to base units and aligns traces to a common time grid.
-- Evaluates derived traces from expressions (`expr[...]`), including chained expressions.
+- Evaluates derived traces from expressions (`-e "name=expr"`), including chained expressions.
 - Renders interactive offline HTML plots with summary statistics and input/source metadata.
 - Supports dual y-axes (up to two distinct y-units per plot).
+- Sorts all traces by RMS (descending) for readability.
 - Opens the result in your browser automatically.
 
 ## Requirements
@@ -35,47 +37,66 @@ time_plot --help
 Render a single input file:
 
 ```bash
-time_plot path/to/data.csv
+time_plot -f path/to/data.csv
 ```
 
-Render file + derived expressions:
+Render file with derived expressions:
 
 ```bash
-time_plot path/to/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'
+time_plot -f sine.csv -e "sum=sine+sine" -e "rate=ddt(sum)"
 ```
 
-Running with no positional sources opens the built-in `sine.csv` example.
+Running with no `-f` flags opens the built-in `sine.csv` example.
 
 ## CLI Usage
 
 ```text
-time_plot [OPTIONS] [SOURCES]...
+time_plot [OPTIONS] -f <files...> [-F <glob>] [-R <regex>] [-e <name=expr>] ...
 ```
 
-Options:
+### Source and Filter Flags (order-sensitive)
 
-- `-o, --output FILE`: output HTML path. Defaults to `./plots/<input-stem>.html`.
-- `--open-browser / --no-open-browser`: open the output in the default browser after writing (default: `--open-browser`).
-- `--plugins-dir DIRECTORY`: plugin directory override.
-- `--parser-options TEXT`: comma-separated `key=value` pairs passed to plugins.
+- `-f <path...>`: Load one or more source files. Repeatable. Shell globs work (e.g., `-f *.csv`).
+- `-F <glob>`: Glob filter on series names; binds to the preceding `-f` group. No glob chars → substring match (`foo` → `*foo*`).
+- `-R <regex>`: Regex filter on series names; same binding semantics as `-F`. ANDed with `-F` if both given.
+- `-e "name=expr"`: Define a named expression (see [Expressions](#expressions)).
+- `-i, --case-insensitive`: Apply `-F`/`-R` filters case-insensitively.
 
-Positional `SOURCES` can be:
+### Options
 
-- File path: `data.csv`
-- Named file: `my_name:data.csv`
-- Expression: `expr[sine+sine]`
-- Named expression: `sum:expr[sine+sine]`
+- `-o, --output FILE`: Output HTML path. Defaults to `/tmp/$USER/time_plot.html`.
+- `--open-browser / --no-open-browser`: Open the output in the default browser after writing (default: `--open-browser`).
+- `-l, --list-series`: List available series for each file (with `-F`/`-R` applied) and exit.
+- `--rms-filter THRESHOLD`: Exclude series whose RMS is below the threshold (same units as the data).
+- `--show-rms-histogram`: Print an ASCII histogram of per-series RMS values and exit.
+- `--add-plugins-dir DIRECTORY`: Additional plugin directory (repeatable; last given has highest precedence).
+- `--list-plugins`: List all discovered plugins with short descriptions and exit.
+- `--plugin-help PLUGIN`: Show detailed help for a named plugin and exit.
+- `--parser-options TEXT`: Comma-separated `key=value` pairs passed to parser plugins.
 
-Quote expressions in the shell to avoid interpretation of `[` and `]`.
+### Environment Variables
+
+- `TIME_PLOT_EXTRA_PLUGINS_PATH`: Colon-separated list of additional plugin directories.
+
+### Examples
+
+```bash
+time_plot -f signal.csv
+time_plot -f data.ptiavg -F 'rtr_0*' -l
+time_plot -f data.ptiavg -F 'rtr_0*' -e "total=sum(*|rtr_0*)"
+time_plot -f a.ptiavg -F 'mac*' -f b.ptiavg -F 'cts*' -e "diff=mac|inst-cts|inst"
+```
+
+**Note:** Positional arguments (without `-f`) are not accepted and will produce an error.
 
 ## Output
 
-- Default output path for a single input file: `./plots/<input-stem>.html`
-- Default output path for multiple input files: `./plots/combined.html`
+- Default output path: `/tmp/$USER/time_plot.html`.
 - Plot HTML is self-contained (inlines `uPlot` JS/CSS assets) — works offline.
-- Interactive chart with mousewheel zoom.
+- Interactive chart with mousewheel zoom and closest-series highlighting.
 - Summary statistics table (`Peak |y|`, `Average`, `RMS`).
 - Source table showing input file paths or expression text per trace.
+- All traces sorted by RMS (descending).
 
 ## Supported Input Formats
 
@@ -96,57 +117,61 @@ time(ns),voltage(mv)
 - Plugin ID: `spice-pwl`
 - Parses SPICE netlists containing `pwl` voltage or current sources.
 - Supports line continuations with leading `+`.
-- Each PWL source becomes one dataset.
+- Each PWL source becomes one series.
 - Parser option `naming_method`: `element_name` (default, uses the SPICE element name, e.g. `vclk`) or `positive_node_name` (uses the positive terminal name, e.g. `clk`).
 
 ```bash
-time_plot spice_pwl.spi --parser-options naming_method=positive_node_name
-```
-
-### 3) Cadence Dynamic Power Total Current
-
-- Plugin ID: `cadence-dynamic-power-totalcurrent`
-- File type: `.totalcurrent`
-- Three tab-separated columns: row index, time (seconds, scientific notation), current (amps).
-
-```bash
-time_plot VDD.peak.totalcurrent
+time_plot -f spice_pwl.spi --parser-options naming_method=positive_node_name
 ```
 
 ## Expressions
 
-Syntax: `expr[<expression>]` or `<name>:expr[<expression>]`
+Syntax: `-e "name=<expression>"`
 
-References use dataset names (flat namespace, valid Python identifiers).
+Expressions are always named — the name is a simple Python identifier.
 
-Operators: `+`, `-`, `*`, `/`
+### Series References
 
-Numeric constants are supported (e.g., `expr[sine*2]`, `expr[sine+0.5]`).
+Series are referenced by pattern matching against loaded series names:
 
-Functions:
+- `foo`: matches any series whose name contains `foo`
+- `file|foo`: matches file containing `file` and series containing `foo`
+- `*|foo*`: explicit glob syntax (any file, series starting with `foo`)
 
-- `average(x)` — mean over the time grid
-- `rms(x)` — RMS over the time grid
+### Operators
+
+`+`, `-`, `*`, `/`
+
+Numeric constants are supported (e.g., `-e "scaled=sine*2"`).
+
+### Functions
+
+- `sum(*|pat)` — aggregate matching series into a single summed trace
+- `average(x)` — mean → scalar horizontal line
+- `rms(x)` — RMS → scalar horizontal line
 - `abs(x)` — element-wise absolute value
-- `ddt(x)` — finite-difference derivative
+- `ddt(x)` — finite-difference derivative (unit → unit/s)
+
+### Return Types
+
+Expressions can return:
+
+- **Series** (`np.ndarray`): a time-series trace
+- **Scalar** (`float`): plotted as a horizontal line (e.g., `rms(x)`, `average(x)`)
+- **Array-of-series** (`list[np.ndarray]`): expanded as `name|1`, `name|2`, ...
+
+### Examples
 
 ```bash
-time_plot sine.csv 'sum:expr[sine+sine]' 'rate:expr[ddt(sum)]'
+time_plot -f sine.csv -e "doubled=sine*2" -e "rate=ddt(doubled)"
+time_plot -f data.ptiavg -F 'rtr_0*' -e "total=sum(*|rtr_0*)"
 ```
 
-Rules:
+### Unit Rules
 
-- Unnamed expressions auto-name as `e1`, `e2`, ...
-- Circular references and unknown names are errors.
-- `+`/`-` require matching units; `*`/`/` produce composed unit strings.
-
-## Naming
-
-- File-backed dataset names default to file stem (`sine.csv` → `sine`).
-- Explicit name: `my_name:/path/to/file.csv`
-- Auto-generated name collisions are bumped: `foo`, `foo_1`, `foo_2`, ...
-- Multi-series name collisions are prefixed: `<source>__<series>`
-- `expr` is a reserved name.
+- `+`/`-` require matching units.
+- `*`/`/` produce composed unit strings (e.g., `v*v`, `v/s`).
+- `ddt(x)` → `<unit>/s`.
 
 ## Plugin System
 
@@ -155,10 +180,20 @@ Plugins are discovered from `time_plot/plugins/` in deterministic sorted order. 
 A plugin must provide:
 
 - `identify(path: Path) -> bool`
-- `parse(path: Path, options: dict[str, str]) -> list[SeriesData]`
-- Optional `plugin_name() -> str`
+- `parse(path: Path, options: dict[str, str], selected: list[str] | None) -> list[SeriesData]`
 
-Override the search directory with `--plugins-dir`.
+Optional:
+
+- `plugin_name() -> str`
+- `list_series(path: Path, options: dict[str, str]) -> list[str]` — efficient pre-load series enumeration
+- `short_description() -> str` — one-line summary for `--list-plugins`
+- `long_description() -> str` — detailed help for `--plugin-help`
+
+Plugin search order (highest precedence first):
+
+1. `--add-plugins-dir` flags (last given = first checked)
+2. `TIME_PLOT_EXTRA_PLUGINS_PATH` entries
+3. Built-in `time_plot/plugins/` directory
 
 ## Development
 
@@ -191,15 +226,16 @@ Validation:
 
 ```bash
 uv run pytest -q
-uv run time_plot --no-open-browser time_plot/example_data/sine.csv
-uv run time_plot --no-open-browser time_plot/example_data/sine.csv 'sum:expr[sine+sine]' 'r:expr[ddt(sum)]'
+uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv
+uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv -e "sum=sine+sine" -e "r=ddt(sum)"
 ```
 
 ## Repository Layout
 
-- `time_plot/`: CLI, processing, plotting, units, plugin system.
+- `time_plot/`: CLI, processing, plotting, units, plugin system, expression parser.
 - `time_plot/plugins/`: parser plugins.
 - `time_plot/example_data/`: bundled sample files.
+- `time_plot/vendor/`: vendored third-party code (ascii-histogram).
 - `scripts/`: developer utilities.
 - `tests/`: automated tests.
 - `doc/`: architecture and plugin docs.
@@ -208,8 +244,9 @@ uv run time_plot --no-open-browser time_plot/example_data/sine.csv 'sum:expr[sin
 
 - `Input file not found`: check the path; generate sample files with `uv run python scripts/generate_example_data.py`.
 - `No plugin recognized file`: check file format and suffix against supported plugins.
-- `Unknown dataset referenced in expression`: verify the dataset name matches the file stem or explicit name.
+- `Series reference matched no loaded series`: verify the series name pattern matches loaded data. Use `-l` to list available series.
 - `At most two distinct y-axis units are supported`: split traces into separate `time_plot` invocations.
+- `Unexpected argument`: positional arguments are not supported. Use `-f` to specify source files.
 
 ## License
 
