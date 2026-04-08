@@ -144,17 +144,25 @@ class Histogram:
         return 0 if abs(f) < 1e-18 else math.floor((math.log10(abs(f)) + 1.0) / 3.0)
 
     @staticmethod
-    def auto_size(data, min_buckets=21, bucket_size=None, middle_value=None):
+    def auto_size(data, min_buckets=21, bucket_size=None, middle_value=None, trim_empty_edges=True):
         """Derive (bucket_size, num_buckets, middle_value) from *data*.
 
         Uses the 10th–90th percentile range so that extreme outliers never
         inflate the bucket width or count — they simply land in the ±Inf edge
         buckets.  Pass *bucket_size* or *middle_value* to pin those values
         while still letting the others be derived automatically.
+
+        When *trim_empty_edges* is True (default) and *middle_value* was not
+        explicitly supplied, the bucket window is shifted so that no interior
+        buckets are wasted as empty leading/trailing bins adjacent to the ±Inf
+        overflow buckets.  Symmetric empty padding (data centred with extra
+        buckets added to meet *min_buckets*) is left unchanged.
         """
         n = len(data)
         if n == 0:
             return (bucket_size or 1.0), min_buckets, (middle_value or 0.0)
+
+        _middle_value_explicit = middle_value is not None
 
         sd = sorted(data)
 
@@ -196,6 +204,29 @@ class Histogram:
             # +4 = 2 overflow edge buckets + 2 cushion so the bulk sits
             # comfortably inside the interior buckets.
             num_buckets = max(min_buckets, _next_odd(n_interior + 4))
+
+        # Shift the window to eliminate asymmetric empty edge buckets.
+        # Example: all-positive data centred on the median ends up with many
+        # empty interior buckets on the negative side; shift right so those
+        # collapse into the -Inf overflow bin, freeing buckets for the tail.
+        # Skip when middle_value was explicit, or when data is a single point.
+        if trim_empty_edges and not _middle_value_explicit and bulk_range != 0:
+            _min_edge = middle_value - bucket_size / 2.0 - (num_buckets - 1) / 2.0 * bucket_size
+            _first_interior_lo = _min_edge + bucket_size
+            _last_interior_hi = _min_edge + (num_buckets - 1) * bucket_size
+
+            leading = min(
+                num_buckets - 2,
+                max(0, math.floor((sd[0] - _first_interior_lo) / bucket_size)),
+            )
+            trailing = min(
+                num_buckets - 2,
+                max(0, math.floor((_last_interior_hi - sd[-1]) / bucket_size)),
+            )
+
+            # Symmetric empties = data centred with min_buckets padding; leave alone.
+            if leading != trailing:
+                middle_value += (leading - trailing) * bucket_size
 
         return bucket_size, num_buckets, middle_value
 
