@@ -171,3 +171,21 @@ def auto_si_prefix(values: np.ndarray) -> str:
             best_prefix = prefix
 
     return best_prefix
+
+
+_SI_SECONDS_RE = re.compile(
+    r"^\s*([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*([fpnumkMGT]?)s?\s*$"
+)
+
+
+def parse_seconds(value: str) -> float:
+    """Parse a time string with optional SI prefix into seconds.
+
+    Examples: "1.5ns", "0.6 us", "2e-3", "100ms", "1.5s"
+    """
+    m = _SI_SECONDS_RE.match(value)
+    if not m:
+        raise ValueError(f"Cannot parse time value: {value!r}")
+    number = float(m.group(1))
+    prefix = m.group(2)
+    return number * SI_PREFIX_FACTORS.get(prefix, 1.0)

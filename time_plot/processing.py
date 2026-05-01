@@ -197,13 +197,12 @@ def align_registry(
     series_list = [e.series for _, e in entries]
 
     for key, entry in entries:
+        entry.series.x, entry.series.y = _merge_duplicate_x(entry.series.x, entry.series.y)
         _validate_strictly_increasing_x(entry.series.x, entry.source_path)
 
     x_arrays = [s.x for s in series_list]
-    dt = _smallest_positive_dx(x_arrays)
-    x_min = min(float(arr[0]) for arr in x_arrays)
-    x_max = max(float(arr[-1]) for arr in x_arrays)
-    x_grid = _uniform_grid(x_min, x_max, dt)
+    x_grid = np.unique(np.concatenate(x_arrays))
+    dt = float(np.min(np.diff(x_grid))) if x_grid.size > 1 else 0.0
 
     traces: list[AlignedTrace] = []
     for key, entry in entries:
@@ -410,6 +409,39 @@ def combine_plot_data(
     )
 
 
+def clip_aligned(
+    data: AlignedPlotData,
+    x_min: float | None = None,
+    x_max: float | None = None,
+) -> AlignedPlotData:
+    mask = np.ones(data.x_seconds.size, dtype=bool)
+    if x_min is not None:
+        mask &= data.x_seconds >= x_min
+    if x_max is not None:
+        mask &= data.x_seconds <= x_max
+    x = data.x_seconds[mask]
+    traces = [
+        AlignedTrace(
+            registry_key=t.registry_key,
+            legend_name=t.legend_name,
+            source_name=t.source_name,
+            source_path=t.source_path,
+            y_label=t.y_label,
+            y_unit=t.y_unit,
+            y_unit_label=t.y_unit_label,
+            y=t.y[mask],
+            y_display_prefix=t.y_display_prefix,
+        )
+        for t in data.traces
+    ]
+    return AlignedPlotData(
+        x_seconds=x,
+        traces=traces,
+        x_timestep_seconds=data.x_timestep_seconds,
+        x_display_prefix=data.x_display_prefix,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -420,6 +452,19 @@ def _fmt_ref(a: str | None, b: str) -> str:
     return f"{a}|{b}"
 
 
+def _merge_duplicate_x(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Average y values for identical consecutive x values."""
+    if x.size == 0:
+        return x, y
+    # np.unique sorts and deduplicates; use return_inverse to sum/count groups
+    unique_x, inverse = np.unique(x, return_inverse=True)
+    if unique_x.size == x.size:
+        return x, y
+    counts = np.bincount(inverse, minlength=unique_x.size).astype(np.float64)
+    unique_y = np.bincount(inverse, weights=y, minlength=unique_x.size) / counts
+    return unique_x, unique_y
+
+
 def _validate_strictly_increasing_x(x: np.ndarray, source_path: Path) -> None:
     diffs = np.diff(x)
     if diffs.size == 0:
@@ -427,7 +472,8 @@ def _validate_strictly_increasing_x(x: np.ndarray, source_path: Path) -> None:
     if np.any(~np.isfinite(x)):
         raise ValueError(f"Non-finite x-axis values in {source_path}")
     if np.any(diffs <= 0):
-        raise ValueError(f"x-axis data must be strictly increasing in {source_path}")
+        bad_idx = int(np.argmax(diffs <= 0)) + 2  # 1-based line of the offending row
+        raise ValueError(f"x-axis data must be strictly increasing in {source_path} (line {bad_idx})")
 
 
 def _smallest_positive_dx(x_arrays: list[np.ndarray]) -> float:

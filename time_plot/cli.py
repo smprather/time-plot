@@ -11,15 +11,32 @@ import rich_click as click
 from time_plot.plotting import write_multi_html
 from time_plot.vendor.ascii_histogram import DataSet, Histogram
 from time_plot.plugin_system import discover_plugins_from_dirs
+from time_plot.units import parse_seconds
 from time_plot.processing import (
     ExpressionDef,
     FileGroup,
     align_registry,
+    clip_aligned,
     combine_plot_data,
     evaluate_expressions,
     list_series_for_groups,
     load_file_groups,
 )
+
+
+class _SecondsParamType(click.ParamType):
+    name = "SECONDS"
+
+    def convert(self, value: object, param: object, ctx: object) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return parse_seconds(str(value))
+        except ValueError as exc:
+            self.fail(str(exc), param, ctx)  # type: ignore[arg-type]
+
+
+_SECONDS = _SecondsParamType()
 
 
 def _series_rms(y: np.ndarray) -> float:
@@ -230,6 +247,22 @@ def _parse_expr_arg(text: str, out: list[ExpressionDef]) -> None:
     metavar="THRESHOLD",
     help="Exclude series whose RMS is below THRESHOLD (same units as the data).",
 )
+@click.option(
+    "--xmin",
+    "x_min",
+    type=_SECONDS,
+    default=None,
+    metavar="TIME",
+    help="Clip data: discard all points with x < TIME (e.g. 1ns, 0.5us, 1e-9).",
+)
+@click.option(
+    "--xmax",
+    "x_max",
+    type=_SECONDS,
+    default=None,
+    metavar="TIME",
+    help="Clip data: discard all points with x > TIME (e.g. 1ns, 0.5us, 1e-9).",
+)
 def cli(
     extra_args: tuple[str, ...],
     output_path: Path | None,
@@ -242,6 +275,8 @@ def cli(
     rms_filter: float | None,
     list_plugins: bool,
     plugin_help: str | None,
+    x_min: float | None,
+    x_max: float | None,
 ) -> None:
     """Plot time-series data from files via pluggable parsers.
 
@@ -371,6 +406,8 @@ def cli(
     try:
         registry = load_file_groups(groups, plugins, parser_options=parser_options, case_insensitive=case_insensitive)
         aligned_files = align_registry(registry)
+        if x_min is not None or x_max is not None:
+            aligned_files = clip_aligned(aligned_files, x_min=x_min, x_max=x_max)
     except (LookupError, ValueError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
 

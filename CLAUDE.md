@@ -54,7 +54,7 @@ CLI -f/-F/-R/-e flags (cli.py)
 
 ### Parser Plugins
 
-Plugins live in `plugins/<name>/` and are auto-discovered. Each plugin must implement:
+Plugins live in `time_plot/plugins/<name>/` and are auto-discovered. External plugin dirs also supported (see `plugin_system.discover_plugins_from_dirs`). Each plugin must implement:
 - `identify(path: Path) -> bool`
 - `parse(path: Path, options: dict[str, str], selected: list[str] | None) -> list[SeriesData]`
 

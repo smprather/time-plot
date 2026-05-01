@@ -41,7 +41,7 @@ def _make_entry(
     return key, entry
 
 
-def test_align_registry_uses_smallest_timestep_and_interpolates(tmp_path):
+def test_align_registry_uses_union_grid_and_interpolates(tmp_path):
     pa = tmp_path / "a.csv"
     pb = tmp_path / "b.csv"
     ka, ea = _make_entry(pa, "a", [0.0, 1.0, 2.0], [0.0, 1.0, 2.0])
@@ -50,16 +50,21 @@ def test_align_registry_uses_smallest_timestep_and_interpolates(tmp_path):
 
     aligned = align_registry(registry)
 
-    np.testing.assert_allclose(aligned.x_seconds, np.asarray([0.0, 1.0, 2.0, 2.5]))
-    assert aligned.x_timestep_seconds == 1.0
+    # x_grid = union of all source x values
+    np.testing.assert_allclose(aligned.x_seconds, np.asarray([0.0, 0.5, 1.0, 2.0, 2.5]))
+    assert aligned.x_timestep_seconds == 0.5
     assert len(aligned.traces) == 2
     a_trace = next(t for t in aligned.traces if t.legend_name == "a")
     b_trace = next(t for t in aligned.traces if t.legend_name == "b")
-    np.testing.assert_allclose(a_trace.y[:3], np.asarray([0.0, 1.0, 2.0]))
-    assert np.isnan(a_trace.y[3])
+    # a: defined at [0,1,2], NaN beyond 2.0
+    np.testing.assert_allclose(a_trace.y[:4], np.asarray([0.0, 0.5, 1.0, 2.0]))
+    assert np.isnan(a_trace.y[4])
+    # b: defined at [0.5,2.5], NaN before 0.5
     assert np.isnan(b_trace.y[0])
-    np.testing.assert_allclose(b_trace.y[1:3], np.asarray([15.0, 25.0]))
-    np.testing.assert_allclose(b_trace.y[3], 30.0)
+    np.testing.assert_allclose(b_trace.y[1], 10.0)
+    np.testing.assert_allclose(b_trace.y[2], 15.0)  # interp(1.0) between (0.5,10)-(2.5,30)
+    np.testing.assert_allclose(b_trace.y[3], 25.0)  # interp(2.0)
+    np.testing.assert_allclose(b_trace.y[4], 30.0)
 
 
 def test_align_registry_rejects_non_monotonic_x(tmp_path):
