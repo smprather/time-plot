@@ -109,6 +109,10 @@ Each input file gets a `data_source_name`:
 - SPICE PWL parser plugin:
   - Plugin ID: `spice-pwl`
   - Package directory: `plugins/spice_pwl`
+- VCD logic parser plugin:
+  - Plugin ID: `vcd`
+  - Package directory: `plugins/vcd`
+  - Parses scalar 1-bit VCD signals as stacked step-mode logic traces.
 - Example data generation:
   - Refer to example_data.md
 - CLI positional source parsing:
@@ -147,6 +151,7 @@ Each input file gets a `data_source_name`:
 - Internal storage does not yet implement the optimization "store only min x + global timestep" for every
   data_set.
 - CLI/integration coverage is focused and not exhaustive.
+- VCD support is scalar-only; vector/bus signals are skipped.
 
 ## MVP Scope (Next Work)
 
@@ -182,6 +187,8 @@ Each input file gets a `data_source_name`:
   - x values converted to seconds.
   - `float64` numpy arrays for x and y in base units.
   - `y_label`: literal y-axis label for the data_set.
+  - `sample_mode`: optional, either `linear` (default) or `step`.
+  - `logic_states`: optional, same shape as x/y, used by VCD-style logic renderers to distinguish `x`/`z`.
 
 ## CLI Rules
 
@@ -210,6 +217,8 @@ Each input file gets a `data_source_name`:
 - x-axis is always time and always stored internally in seconds.
 - x-axis label is always `Time (<display units>)`.
 - y-axis type is determined by `y_unit` alone.
+- `sample_mode="linear"` traces are linearly interpolated during alignment.
+- `sample_mode="step"` traces hold the previous value during alignment.
 - At most two distinct y-axis units may be present in one plot.
 - Legend names may collide.
   - Plot output may deduplicate labels for display (for example `Voltage [2]`).
@@ -221,6 +230,7 @@ Each input file gets a `data_source_name`:
 - x-axis need not have homogeneous timesteps in source files.
 - Global x-axis timestep is the smallest positive `delta x` across file-backed sources.
 - All sources are aligned to a common x-grid by linear interpolation.
+- Step-mode sources are aligned to the common x-grid with previous-held values, preserving instant transitions.
 - No extrapolation outside a source's x-range.
   - Missing values outside range are `NaN`.
 - Global x-grid endpoint behavior:
@@ -252,6 +262,13 @@ Each input file gets a `data_source_name`:
 ## Plotting Rules
 
 - When two y-axis types are present, use `uPlot` dual y-axis support.
+- Non-logic step-mode traces render through `uPlot.paths.stepped({ align: 1 })`, creating vertical edges at sample times.
+- Logic traces render through custom interval paths so each state owns only its `[t_i, t_{i+1})` span.
+- Logic traces are transformed at render time into separate stacked lanes, with y-axis ticks labelled by signal name and no y-axis title.
+- Logic `z` states render as orange midlines; logic `x` states render as red low/high rails. Numeric y data keeps both as `NaN`.
+- Logic helper lines are grouped behind one visible legend row per signal; legend values display `0`/`1`/`X`/`Z`.
+- Logic plots disable uPlot cursor-nearest focus/highlighting.
+- Logic plots keep legend/source metadata but omit the numeric `Peak |y|`/`Average`/`RMS` table.
 - Y-axis labels: `"LongUnit (SI_prefix + ShortUnit)"` — e.g., `"Voltage (mv)"`, `"Amps (ma)"`.
 - Summary table column headers include `(SI_prefix + ShortUnit)` when all traces share a single y-unit — e.g.,
   `"Average (mv)"`.

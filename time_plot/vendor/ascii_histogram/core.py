@@ -99,11 +99,11 @@ class Histogram:
         self.bucket_size = float(bucket_size)
         self.middle_value = float(middle_value)
         self.max_bar_height = max_bar_height
-        self.data_sets = []
-        self.bucket_sets = None
-        self._min_edge = None
-        self._max_edge_of_min_bucket = None
-        self._min_edge_of_max_bucket = None
+        self.data_sets: list[DataSet] = []
+        self.bucket_sets: list[list[int]] = []
+        self._min_edge = 0.0
+        self._max_edge_of_min_bucket = 0.0
+        self._min_edge_of_max_bucket = 0.0
 
     @staticmethod
     def snap_to(value, ref_value, interval):

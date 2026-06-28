@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from click.testing import CliRunner
 
 from time_plot.cli import _build_file_groups, _parse_expr_arg
 from time_plot.processing import ExpressionDef

@@ -5,10 +5,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from time_plot.models import SeriesData
+from time_plot.models import SampleMode, SeriesData
 from time_plot.processing import (
     ExpressionDef,
-    FileGroup,
     _RegistryEntry,
     _registry_key,
     align_registry,
@@ -24,6 +23,8 @@ def _make_entry(
     y: list[float],
     y_unit: str = "v",
     y_unit_label: str = "Voltage",
+    sample_mode: SampleMode = "linear",
+    logic_states: list[str] | None = None,
 ) -> tuple[str, _RegistryEntry]:
     series = SeriesData(
         source_name="Test Source",
@@ -35,6 +36,8 @@ def _make_entry(
         y_unit_label=y_unit_label,
         x=np.asarray(x, dtype=np.float64),
         y=np.asarray(y, dtype=np.float64),
+        sample_mode=sample_mode,
+        logic_states=np.asarray(logic_states, dtype=np.str_) if logic_states is not None else None,
     )
     key = _registry_key(path, name)
     entry = _RegistryEntry(series=series, source_path=path, plugin_name="test-plugin")
@@ -65,6 +68,52 @@ def test_align_registry_uses_union_grid_and_interpolates(tmp_path):
     np.testing.assert_allclose(b_trace.y[2], 15.0)  # interp(1.0) between (0.5,10)-(2.5,30)
     np.testing.assert_allclose(b_trace.y[3], 25.0)  # interp(2.0)
     np.testing.assert_allclose(b_trace.y[4], 30.0)
+
+
+def test_align_registry_uses_previous_value_for_step_traces(tmp_path):
+    pa = tmp_path / "logic.vcd"
+    pb = tmp_path / "analog.csv"
+    ka, ea = _make_entry(
+        pa,
+        "clk",
+        [0.0, 1.0],
+        [0.0, 1.0],
+        y_unit="logic",
+        y_unit_label="Logic",
+        sample_mode="step",
+    )
+    kb, eb = _make_entry(pb, "analog", [0.0, 0.5, 1.0], [0.0, 0.5, 1.0])
+    registry = {ka: ea, kb: eb}
+
+    aligned = align_registry(registry)
+
+    clk_trace = next(t for t in aligned.traces if t.legend_name == "clk")
+    assert clk_trace.sample_mode == "step"
+    np.testing.assert_allclose(aligned.x_seconds, [0.0, 0.5, 1.0])
+    np.testing.assert_allclose(clk_trace.y, [0.0, 0.0, 1.0])
+
+
+def test_align_registry_carries_logic_states_for_step_traces(tmp_path):
+    pa = tmp_path / "logic.vcd"
+    pb = tmp_path / "analog.csv"
+    ka, ea = _make_entry(
+        pa,
+        "data",
+        [0.0, 1.0],
+        [float("nan"), float("nan")],
+        y_unit="logic",
+        y_unit_label="Logic",
+        sample_mode="step",
+        logic_states=["z", "x"],
+    )
+    kb, eb = _make_entry(pb, "analog", [0.0, 0.5, 1.0], [0.0, 0.5, 1.0])
+    registry = {ka: ea, kb: eb}
+
+    aligned = align_registry(registry)
+
+    data_trace = next(t for t in aligned.traces if t.legend_name == "data")
+    assert data_trace.logic_states is not None
+    np.testing.assert_array_equal(data_trace.logic_states, ["z", "z", "x"])
 
 
 def test_align_registry_rejects_non_monotonic_x(tmp_path):
@@ -166,6 +215,27 @@ def test_evaluate_expressions_abs(tmp_path):
     assert traces[0].y_unit == "v"
 
 
+def test_evaluate_expressions_preserves_step_mode_with_scalar_math(tmp_path):
+    pa = tmp_path / "logic.vcd"
+    ka, ea = _make_entry(
+        pa,
+        "clk",
+        [0.0, 1.0],
+        [0.0, 1.0],
+        y_unit="logic",
+        y_unit_label="Logic",
+        sample_mode="step",
+    )
+    registry = {ka: ea}
+    aligned = align_registry(registry)
+
+    expr_defs = [ExpressionDef(name="inv", expr_text="1-clk")]
+    traces = evaluate_expressions(aligned, expr_defs, registry)
+
+    assert traces[0].sample_mode == "step"
+    np.testing.assert_allclose(traces[0].y, np.asarray([1.0, 0.0]))
+
+
 def test_evaluate_expressions_sum_aggregates_array(tmp_path):
     pa = tmp_path / "f1.csv"
     pb = tmp_path / "f2.csv"
@@ -204,6 +274,6 @@ def test_evaluate_expressions_registry_duplicate_key_raises(tmp_path):
     pa = tmp_path / "dup.csv"
     ka, ea = _make_entry(pa, "sig", [0.0, 1.0], [1.0, 2.0])
     # Manually duplicate the key
-    registry = {ka: ea, ka: ea}  # dict deduplication means only one entry
+    registry = dict([(ka, ea), (ka, ea)])  # dict deduplication means only one entry
     # Should be fine: dict can't have duplicate keys
     assert len(registry) == 1

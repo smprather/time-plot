@@ -29,7 +29,8 @@ After changes, verify:
 1. `uv run pytest -q`
 2. `uv run python scripts/generate_example_data.py`
 3. `uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv`
-4. `uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv -e "sum=sine+sine" -e "r=ddt(sum)"`
+4. `uv run time_plot --no-open-browser -f time_plot/example_data/logic.vcd`
+5. `uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv -e "sum=sine+sine" -e "r=ddt(sum)"`
 
 ## Architecture
 
@@ -47,7 +48,7 @@ CLI -f/-F/-R/-e flags (cli.py)
 - **`time_plot/cli.py`** — CLI entry point (rich-click). Order-sensitive `-f/-F/-R/-e` flags. Positional args are errors.
 - **`time_plot/processing.py`** — Core pipeline: FileGroup-based loading, series registry (keyed by `realpath|series_name`), glob/regex filtering, x-grid alignment, expression evaluation, RMS sorting.
 - **`time_plot/expr_parser.py`** — Custom recursive descent expression parser. Series refs use `file|series` pattern syntax with glob matching. Returns series, scalars, or array-of-series.
-- **`time_plot/plotting.py`** — HTML generation. Embeds uPlot JS/CSS from `uplot-python` package. Handles dual y-axis, SI unit auto-scaling, closest-series highlighting.
+- **`time_plot/plotting.py`** — HTML generation. Embeds uPlot JS/CSS from `uplot-python` package. Handles dual y-axis, SI unit auto-scaling, closest-series highlighting, stacked stepped logic traces with signal-name y ticks.
 - **`time_plot/models.py`** — Data models: `SeriesData`.
 - **`time_plot/plugin_system.py`** — Discovers and loads parser plugins from multiple directories with precedence ordering.
 - **`time_plot/units.py`** — SI prefix selection and unit display.
@@ -62,9 +63,9 @@ Optional:
 - `list_series(path, options) -> list[str]` — cheap pre-load enumeration
 - `short_description() -> str` / `long_description() -> str` — for `--list-plugins`/`--plugin-help`
 
-Each `SeriesData` must provide: `name`, `y_unit` (no SI prefix, e.g. `"v"`), `y_unit_label`, x in seconds as `float64` numpy arrays.
+Each `SeriesData` must provide: `name`, `y_unit` (no SI prefix, e.g. `"v"`), `y_unit_label`, x in seconds as `float64` numpy arrays. Optional `sample_mode="step"` means previous-held alignment and stepped rendering; optional `logic_states` preserves `x`/`z`; `y_unit="logic"` step traces render as stacked lanes.
 
-Current plugins: `voltage_or_current_vs_time` (2-column CSV), `spice_pwl` (SPICE netlist PWL sources).
+Current plugins: `voltage_or_current_vs_time` (2-column CSV), `spice_pwl` (SPICE netlist PWL sources), `vcd` (scalar VCD logic signals).
 
 ### Expression System
 
@@ -80,6 +81,8 @@ Custom recursive descent parser in `expr_parser.py`. Syntax: `-e "name=expr"`.
 
 - x-axis is always time in seconds internally.
 - Global x-grid: superset of all source x-values; timestep = smallest positive Δx across all sources; exact `x_max` always included.
+- `sample_mode="linear"` traces use linear interpolation; `sample_mode="step"` traces use previous-held values.
+- Logic `z` renders as orange midline; logic `x` renders as red low/high rails.
 - No extrapolation — values outside a source's range are `NaN`.
 - At most **two distinct `y_unit` values** allowed per plot (dual y-axis).
 - All traces sorted by RMS descending.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +14,7 @@ from time_plot.expr_parser import (
     evaluate,
     parse_expr_def,
 )
-from time_plot.models import SeriesData
+from time_plot.models import SampleMode, SeriesData
 from time_plot.plugin_system import ParserPlugin, select_plugin
 
 
@@ -49,6 +49,8 @@ class AlignedTrace:
     y_unit_label: str
     y: np.ndarray
     y_display_prefix: str | None = None
+    sample_mode: SampleMode = "linear"
+    logic_states: np.ndarray | None = None
 
 
 @dataclass(slots=True)
@@ -197,7 +199,12 @@ def align_registry(
     series_list = [e.series for _, e in entries]
 
     for key, entry in entries:
-        entry.series.x, entry.series.y = _merge_duplicate_x(entry.series.x, entry.series.y)
+        entry.series.x, entry.series.y, entry.series.logic_states = _merge_duplicate_x(
+            entry.series.x,
+            entry.series.y,
+            entry.series.logic_states,
+            entry.series.sample_mode,
+        )
         _validate_strictly_increasing_x(entry.series.x, entry.source_path)
 
     x_arrays = [s.x for s in series_list]
@@ -207,7 +214,12 @@ def align_registry(
     traces: list[AlignedTrace] = []
     for key, entry in entries:
         s = entry.series
-        y_grid = _interpolate_onto_grid(s.x, s.y, x_grid)
+        if s.sample_mode == "step":
+            y_grid = _step_onto_grid(s.x, s.y, x_grid)
+            logic_states_grid = _step_states_onto_grid(s.x, s.logic_states, x_grid)
+        else:
+            y_grid = _interpolate_onto_grid(s.x, s.y, x_grid)
+            logic_states_grid = None
         traces.append(AlignedTrace(
             registry_key=key,
             legend_name=s.name,
@@ -218,6 +230,8 @@ def align_registry(
             y_unit_label=s.y_unit_label,
             y=y_grid,
             y_display_prefix=s.y_display_prefix,
+            sample_mode=s.sample_mode,
+            logic_states=logic_states_grid,
         ))
 
     y_units = {t.y_unit for t in traces}
@@ -267,7 +281,7 @@ def evaluate_expressions(
             expr_ns: dict[str, EvalResult] = expr_ns,
             registry: dict[str, _RegistryEntry] = registry,
         ):
-            def resolve(a_pat: str | None, b_pat: str, context: str) -> ExprResult:
+            def resolve(a_pat: str | None, b_pat: str, context: str) -> EvalResult:
                 # 1. Check expression namespace first (exact name match on b_pat)
                 if a_pat is None and b_pat in expr_ns and not any(c in b_pat for c in "*?[]"):
                     return expr_ns[b_pat]
@@ -295,7 +309,13 @@ def evaluate_expressions(
                             f"matched {len(matches)} series: {names}"
                         )
                     t = matches[0][1]
-                    return EvalResult(value=t.y, y_unit=t.y_unit, y_unit_label=t.y_unit_label, y_label=t.y_label)
+                    return EvalResult(
+                        value=t.y,
+                        y_unit=t.y_unit,
+                        y_unit_label=t.y_unit_label,
+                        y_label=t.y_label,
+                        sample_mode=t.sample_mode,
+                    )
 
                 # array context
                 if not matches:
@@ -308,6 +328,7 @@ def evaluate_expressions(
                     y_unit=first.y_unit,
                     y_unit_label=first.y_unit_label,
                     y_label=b_pat,
+                    sample_mode=_common_sample_mode([t for _, t in matches]),
                 )
 
             return resolve
@@ -326,6 +347,7 @@ def evaluate_expressions(
                 y_unit=result.y_unit,
                 y_unit_label=result.y_unit_label,
                 y_label=result.y_label or name,
+                sample_mode=result.sample_mode,
             )
             produced.append(AlignedTrace(
                 registry_key=f"expr|{name}",
@@ -336,6 +358,7 @@ def evaluate_expressions(
                 y_unit=result.y_unit,
                 y_unit_label=result.y_unit_label,
                 y=arr,
+                sample_mode=result.sample_mode,
             ))
 
         elif isinstance(val, np.ndarray):
@@ -344,6 +367,7 @@ def evaluate_expressions(
                 y_unit=result.y_unit,
                 y_unit_label=result.y_unit_label,
                 y_label=result.y_label or name,
+                sample_mode=result.sample_mode,
             )
             produced.append(AlignedTrace(
                 registry_key=f"expr|{name}",
@@ -354,6 +378,7 @@ def evaluate_expressions(
                 y_unit=result.y_unit,
                 y_unit_label=result.y_unit_label,
                 y=val,
+                sample_mode=result.sample_mode,
             ))
 
         elif isinstance(val, list):
@@ -367,6 +392,7 @@ def evaluate_expressions(
                     y_unit=result.y_unit,
                     y_unit_label=result.y_unit_label,
                     y_label=f"{name}|{i}",
+                    sample_mode=result.sample_mode,
                 )
                 sub_results.append(sub_er)
                 expr_ns[sub_name] = sub_er
@@ -379,13 +405,15 @@ def evaluate_expressions(
                     y_unit=result.y_unit,
                     y_unit_label=result.y_unit_label,
                     y=sub_arr_np,
+                    sample_mode=result.sample_mode,
                 ))
             # Also store the whole array in expr_ns under the bare name
             expr_ns[name] = EvalResult(
-                value=[er.value for er in sub_results],
+                value=[np.asarray(er.value, dtype=np.float64) for er in sub_results],
                 y_unit=result.y_unit,
                 y_unit_label=result.y_unit_label,
                 y_label=name,
+                sample_mode=result.sample_mode,
             )
 
     return produced
@@ -431,6 +459,8 @@ def clip_aligned(
             y_unit_label=t.y_unit_label,
             y=t.y[mask],
             y_display_prefix=t.y_display_prefix,
+            sample_mode=t.sample_mode,
+            logic_states=t.logic_states[mask] if t.logic_states is not None else None,
         )
         for t in data.traces
     ]
@@ -452,17 +482,35 @@ def _fmt_ref(a: str | None, b: str) -> str:
     return f"{a}|{b}"
 
 
-def _merge_duplicate_x(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Average y values for identical consecutive x values."""
+def _common_sample_mode(traces: list[AlignedTrace]) -> SampleMode:
+    return "step" if traces and all(t.sample_mode == "step" for t in traces) else "linear"
+
+
+def _merge_duplicate_x(
+    x: np.ndarray,
+    y: np.ndarray,
+    logic_states: np.ndarray | None,
+    sample_mode: SampleMode,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """Merge duplicate x values. Step signals keep the last value at each instant."""
     if x.size == 0:
-        return x, y
+        return x, y, logic_states
     # np.unique sorts and deduplicates; use return_inverse to sum/count groups
     unique_x, inverse = np.unique(x, return_inverse=True)
     if unique_x.size == x.size:
-        return x, y
+        return x, y, logic_states
+    if sample_mode == "step":
+        unique_y = np.empty(unique_x.size, dtype=np.float64)
+        unique_logic_states = np.empty(unique_x.size, dtype=np.str_) if logic_states is not None else None
+        for idx in range(unique_x.size):
+            last_sample_idx = np.flatnonzero(inverse == idx)[-1]
+            unique_y[idx] = y[last_sample_idx]
+            if unique_logic_states is not None and logic_states is not None:
+                unique_logic_states[idx] = logic_states[last_sample_idx]
+        return unique_x, unique_y, unique_logic_states
     counts = np.bincount(inverse, minlength=unique_x.size).astype(np.float64)
     unique_y = np.bincount(inverse, weights=y, minlength=unique_x.size) / counts
-    return unique_x, unique_y
+    return unique_x, unique_y, None
 
 
 def _validate_strictly_increasing_x(x: np.ndarray, source_path: Path) -> None:
@@ -513,3 +561,31 @@ def _interpolate_onto_grid(x: np.ndarray, y: np.ndarray, x_grid: np.ndarray) -> 
     if np.any(mask):
         y_grid[mask] = np.interp(x_grid[mask], x, y).astype(np.float64)
     return y_grid
+
+
+def _step_onto_grid(x: np.ndarray, y: np.ndarray, x_grid: np.ndarray) -> np.ndarray:
+    y_grid = np.full_like(x_grid, np.nan, dtype=np.float64)
+    if x.size == 0:
+        return y_grid
+    tol = max(float(np.min(np.diff(x))) * 1e-6 if x.size > 1 else 0.0, 1e-15)
+    mask = (x_grid >= (x[0] - tol)) & (x_grid <= (x[-1] + tol))
+    if np.any(mask):
+        indexes = np.searchsorted(x, x_grid[mask], side="right") - 1
+        indexes = np.clip(indexes, 0, x.size - 1)
+        y_grid[mask] = y[indexes].astype(np.float64)
+    return y_grid
+
+
+def _step_states_onto_grid(x: np.ndarray, states: np.ndarray | None, x_grid: np.ndarray) -> np.ndarray | None:
+    if states is None:
+        return None
+    state_grid = np.full(x_grid.shape, "", dtype=np.str_)
+    if x.size == 0:
+        return state_grid
+    tol = max(float(np.min(np.diff(x))) * 1e-6 if x.size > 1 else 0.0, 1e-15)
+    mask = (x_grid >= (x[0] - tol)) & (x_grid <= (x[-1] + tol))
+    if np.any(mask):
+        indexes = np.searchsorted(x, x_grid[mask], side="right") - 1
+        indexes = np.clip(indexes, 0, x.size - 1)
+        state_grid[mask] = states[indexes]
+    return state_grid

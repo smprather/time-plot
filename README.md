@@ -7,6 +7,7 @@ Plot arbitrary time-series data (non-calendar x-axis) into self-contained HTML u
 - Loads one or more input files via auto-discovered parser plugins.
 - Filters series by glob (`-F`) or regex (`-R`) patterns.
 - Converts all data to base units and aligns traces to a common time grid.
+- Renders sampled logic signals as stacked step lanes so signals do not overlap.
 - Evaluates derived traces from expressions (`-e "name=expr"`), including chained expressions.
 - Renders interactive offline HTML plots with summary statistics and input/source metadata.
 - Supports dual y-axes (up to two distinct y-units per plot).
@@ -82,6 +83,7 @@ time_plot [OPTIONS] -f <files...> [-F <glob>] [-R <regex>] [-e <name=expr>] ...
 
 ```bash
 time_plot -f signal.csv
+time_plot -f logic.vcd
 time_plot -f data.ptiavg -F 'rtr_0*' -l
 time_plot -f data.ptiavg -F 'rtr_0*' -e "total=sum(*|rtr_0*)"
 time_plot -f a.ptiavg -F 'mac*' -f b.ptiavg -F 'cts*' -e "diff=mac|inst-cts|inst"
@@ -93,8 +95,9 @@ time_plot -f a.ptiavg -F 'mac*' -f b.ptiavg -F 'cts*' -e "diff=mac|inst-cts|inst
 
 - Default output path: `/tmp/$USER/time_plot.html`.
 - Plot HTML is self-contained (inlines `uPlot` JS/CSS assets) — works offline.
-- Interactive chart with mousewheel zoom and closest-series highlighting.
-- Summary statistics table (`Peak |y|`, `Average`, `RMS`).
+- Interactive chart with mousewheel zoom and closest-series highlighting for non-logic plots.
+- Summary statistics table (`Peak |y|`, `Average`, `RMS`) for non-logic plots.
+- Logic traces use stacked lane rendering with vertical transitions at change timestamps; signal names appear as y-axis ticks, with no `Logic` y-axis title, no cursor-nearest highlighting, and no numeric summary table. Logic legend rows toggle all rendered helper lines for the signal and show `0`/`1`/`X`/`Z` values.
 - Source table showing input file paths or expression text per trace.
 - All traces sorted by RMS (descending).
 
@@ -122,6 +125,20 @@ time(ns),voltage(mv)
 
 ```bash
 time_plot -f spice_pwl.spi --parser-options naming_method=positive_node_name
+```
+
+### 3) VCD Logic
+
+- Plugin ID: `vcd`
+- File type: `.vcd`
+- Parses scalar 1-bit VCD signals.
+- Signal names are hierarchical, such as `top.clk`.
+- Logic values render as separate stacked lanes: `0 -> low`, `1 -> high`, `z -> orange midline`, `x -> red low/high rails`.
+- Logic plots keep the legend/source table but omit `Peak |y|`, `Average`, and `RMS` statistics. One legend row controls each signal even though `x`/`z` states use helper lines.
+- Vectors/buses are not plotted by this first-pass plugin.
+
+```bash
+time_plot -f logic.vcd -F 'top.clk'
 ```
 
 ## Expressions
@@ -189,6 +206,10 @@ Optional:
 - `short_description() -> str` — one-line summary for `--list-plugins`
 - `long_description() -> str` — detailed help for `--plugin-help`
 
+`SeriesData.sample_mode` defaults to `linear`; plugins can set it to `step` for previous-held signals such as
+VCD logic. Logic step traces render as stacked lanes rather than overlaid lines; optional `logic_states` preserve
+`x`/`z` display state while numeric data treats them as gaps.
+
 Plugin search order (highest precedence first):
 
 1. `--add-plugins-dir` flags (last given = first checked)
@@ -227,6 +248,7 @@ Validation:
 ```bash
 uv run pytest -q
 uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv
+uv run time_plot --no-open-browser -f time_plot/example_data/logic.vcd
 uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv -e "sum=sine+sine" -e "r=ddt(sum)"
 ```
 

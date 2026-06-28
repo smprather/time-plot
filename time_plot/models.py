@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
 from time_plot.units import scale_for_display
+
+SampleMode = Literal["linear", "step"]
 
 
 @dataclass(slots=True)
@@ -20,12 +23,22 @@ class SeriesData:
     y: np.ndarray
     x_display_prefix: str | None = None
     y_display_prefix: str | None = None
+    sample_mode: SampleMode = "linear"
+    logic_states: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         self.x = np.asarray(self.x, dtype=np.float64)
         self.y = np.asarray(self.y, dtype=np.float64)
         if self.x.shape != self.y.shape:
             msg = "x and y arrays must have the same shape"
+            raise ValueError(msg)
+        if self.logic_states is not None:
+            self.logic_states = np.asarray(self.logic_states, dtype=np.str_)
+            if self.logic_states.shape != self.x.shape:
+                msg = "logic_states must have the same shape as x and y arrays"
+                raise ValueError(msg)
+        if self.sample_mode not in ("linear", "step"):
+            msg = f"Unsupported sample_mode: {self.sample_mode!r}"
             raise ValueError(msg)
 
     @property

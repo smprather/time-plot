@@ -18,7 +18,7 @@ uv run ty check                            # type check
 uv run python scripts/generate_example_data.py  # regen example data
 ```
 
-**Validate after changes:** `uv run pytest -q` then `uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv -e "sum=sine+sine" -e "r=ddt(sum)"`
+**Validate after changes:** `uv run pytest -q` then `uv run time_plot --no-open-browser -f time_plot/example_data/sine.csv -e "sum=sine+sine" -e "r=ddt(sum)"` and `uv run time_plot --no-open-browser -f time_plot/example_data/logic.vcd`
 
 ## File Layout
 
@@ -33,10 +33,11 @@ time_plot/
   plugin_system.py               # discover/load plugins from multiple dirs
   units.py                       # SI prefix selection, unit parsing
   example_data.py                # example data generation logic
-  example_data/                  # bundled sine.csv, cosine.csv, spice_pwl.spi
+  example_data/                  # bundled sine.csv, cosine.csv, spice_pwl.spi, logic.vcd
   plugins/
     voltage_or_current_vs_time/  # 2-col CSV: time(unit),voltage|current(unit)
     spice_pwl/                   # SPICE netlist PWL sources
+    vcd/                         # VCD scalar logic signals
   vendor/
     ascii_histogram/             # vendored histogram for --show-rms-histogram
 tests/                           # pytest: per-module + CLI integration
@@ -75,10 +76,10 @@ CLI -f/-F/-R args → plugin_system: discover plugins from multiple dirs
 
 ## Key Data Models (processing.py, models.py)
 
-- **SeriesData**: `source_name, name, x_label, y_label, x_unit, y_unit, y_unit_label, x, y` (float64 numpy). Plugins return `list[SeriesData]`.
+- **SeriesData**: `source_name, name, x_label, y_label, x_unit, y_unit, y_unit_label, x, y, sample_mode, logic_states` (float64 numpy). Plugins return `list[SeriesData]`.
 - **FileGroup**: `files: list[Path], glob_filter, regex_filter`
 - **ExpressionDef**: `name, expr_text`
-- **AlignedTrace**: `registry_key, legend_name, source_name, source_path, y_label, y_unit, y_unit_label, y`
+- **AlignedTrace**: `registry_key, legend_name, source_name, source_path, y_label, y_unit, y_unit_label, y, sample_mode, logic_states`
 - **AlignedPlotData**: `x_seconds, traces: list[AlignedTrace], x_timestep_seconds`
 
 Series registry keys: `realpath|series_name` (unique per file+series).
@@ -87,7 +88,7 @@ Series registry keys: `realpath|series_name` (unique per file+series).
 
 - x-axis always seconds internally; must be strictly increasing.
 - Global x-grid: union of all source x-values; timestep = smallest positive Δx; exact x_max included.
-- Alignment by linear interpolation; no extrapolation (NaN outside range).
+- Alignment by linear interpolation for `sample_mode="linear"`; previous-held value for `sample_mode="step"`; no extrapolation (NaN outside range).
 - Max 2 distinct y_unit values per plot (dual y-axis).
 - All traces sorted by RMS descending.
 
@@ -114,17 +115,18 @@ Optional:
 - `short_description() -> str` — for `--list-plugins`
 - `long_description() -> str` — for `--plugin-help`
 
-SeriesData must provide: `name`, `y_unit` (no SI prefix, e.g. `"v"`), `y_unit_label`, x in seconds, float64 arrays.
+SeriesData must provide: `name`, `y_unit` (no SI prefix, e.g. `"v"`), `y_unit_label`, x in seconds, float64 arrays. Optional `sample_mode="step"` renders previous-held signals; optional `logic_states` preserves `x`/`z`; `y_unit="logic"` step traces render as stacked lanes.
 
-**Current plugins:** `voltage_or_current_vs_time` (.csv), `spice_pwl` (.spi/.sp/.cir/.net/.spice)
+**Current plugins:** `voltage_or_current_vs_time` (.csv), `spice_pwl` (.spi/.sp/.cir/.net/.spice), `vcd` (.vcd scalar logic)
 
 Plugin search order: `--add-plugins-dir` (last=first) → `TIME_PLOT_EXTRA_PLUGINS_PATH` → built-in `plugins/`.
 
 ## Plotting
 
 - Self-contained HTML: uPlot JS/CSS inlined from `uplot-python` package.
+- Non-logic step traces use `uPlot.paths.stepped({ align: 1 })`; logic traces use custom interval paths so each state owns only its `[t_i, t_{i+1})` interval. Logic traces get separate stacked lanes with signal-name y ticks and no y-axis title. Logic `z` is orange midline; logic `x` is red low/high rails. Logic legend rows group helper lines and show `0`/`1`/`X`/`Z`; cursor-nearest highlighting is disabled for logic plots.
 - Mousewheel zoom, drag-to-zoom, closest-series highlighting (cursor.focus.prox=30).
-- Dual y-axis, summary stats table (Peak |y|, Average, RMS), source table.
+- Dual y-axis, summary stats table (Peak |y|, Average, RMS) for non-logic plots, source table.
 - SI display auto-scaling per axis. 10-color Tableau palette.
 
 ## Coding Standards

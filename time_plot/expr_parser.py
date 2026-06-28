@@ -46,6 +46,8 @@ from typing import Callable
 
 import numpy as np
 
+from time_plot.models import SampleMode
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -103,21 +105,29 @@ def tokenize(text: str) -> list[Token]:
             i += 1
             continue
         if c == "|":
-            tokens.append(Token(TokKind.PIPE, "|", i)); i += 1
+            tokens.append(Token(TokKind.PIPE, "|", i))
+            i += 1
         elif c == "+":
-            tokens.append(Token(TokKind.PLUS, "+", i)); i += 1
+            tokens.append(Token(TokKind.PLUS, "+", i))
+            i += 1
         elif c == "-":
-            tokens.append(Token(TokKind.MINUS, "-", i)); i += 1
+            tokens.append(Token(TokKind.MINUS, "-", i))
+            i += 1
         elif c == "/":
-            tokens.append(Token(TokKind.SLASH, "/", i)); i += 1
+            tokens.append(Token(TokKind.SLASH, "/", i))
+            i += 1
         elif c == "(":
-            tokens.append(Token(TokKind.LPAREN, "(", i)); i += 1
+            tokens.append(Token(TokKind.LPAREN, "(", i))
+            i += 1
         elif c == ")":
-            tokens.append(Token(TokKind.RPAREN, ")", i)); i += 1
+            tokens.append(Token(TokKind.RPAREN, ")", i))
+            i += 1
         elif c == ",":
-            tokens.append(Token(TokKind.COMMA, ",", i)); i += 1
+            tokens.append(Token(TokKind.COMMA, ",", i))
+            i += 1
         elif c == "*":
-            tokens.append(Token(TokKind.STAR, "*", i)); i += 1
+            tokens.append(Token(TokKind.STAR, "*", i))
+            i += 1
         elif c.isdigit() or (c == "." and i + 1 < n and text[i + 1].isdigit()):
             j = i
             while j < n and (text[j].isdigit() or text[j] in ".eE+-"):
@@ -167,18 +177,18 @@ class SeriesRefNode:
 @dataclass(slots=True)
 class UnaryNode:
     op: str             # '-'
-    operand: object     # ASTNode
+    operand: ASTNode
 
 @dataclass(slots=True)
 class BinOpNode:
     op: str             # '+' '-' '*' '/'
-    left: object        # ASTNode
-    right: object       # ASTNode
+    left: ASTNode
+    right: ASTNode
 
 @dataclass(slots=True)
 class CallNode:
     func: str           # function name
-    args: list          # list[ASTNode]
+    args: list[ASTNode]
 
 
 ASTNode = NumNode | SeriesRefNode | UnaryNode | BinOpNode | CallNode
@@ -353,6 +363,7 @@ class EvalResult:
     y_unit: str
     y_unit_label: str
     y_label: str
+    sample_mode: SampleMode = "linear"
 
 
 def evaluate(
@@ -381,7 +392,13 @@ def _eval(node: ASTNode, resolve: ResolveFn, x: np.ndarray) -> EvalResult:
     if isinstance(node, UnaryNode):
         inner = _eval(node.operand, resolve, x)
         val = _negate(inner.value)
-        return EvalResult(value=val, y_unit=inner.y_unit, y_unit_label=inner.y_unit_label, y_label=inner.y_label)
+        return EvalResult(
+            value=val,
+            y_unit=inner.y_unit,
+            y_unit_label=inner.y_unit_label,
+            y_label=inner.y_label,
+            sample_mode=inner.sample_mode,
+        )
 
     if isinstance(node, BinOpNode):
         return _eval_binop(node, resolve, x)
@@ -398,7 +415,10 @@ def _negate(val: ExprResult) -> ExprResult:
         return -val
     if isinstance(val, np.ndarray):
         return -val
-    return [-v for v in val]  # list[ndarray]
+    if isinstance(val, list):
+        return [-v for v in val]
+    msg = f"Cannot negate value of type {type(val)}"
+    raise TypeError(msg)
 
 
 def _eval_binop(node: BinOpNode, resolve: ResolveFn, x: np.ndarray) -> EvalResult:
@@ -422,9 +442,21 @@ def _eval_binop(node: BinOpNode, resolve: ResolveFn, x: np.ndarray) -> EvalResul
             raise ValueError(f"Cannot add series with different units: {left.y_unit} and {right.y_unit}")
         if op == "-" and left.y_unit != right.y_unit and not _is_scalar_unit(left) and not _is_scalar_unit(right):
             raise ValueError(f"Cannot subtract series with different units: {left.y_unit} and {right.y_unit}")
-        result = [_apply_op(op, a, b) for a, b in zip(lv_list, rv_list)]
+        result: list[np.ndarray] = []
+        for a, b in zip(lv_list, rv_list):
+            applied = _apply_op(op, a, b)
+            if isinstance(applied, float):
+                result.append(np.full_like(x, applied, dtype=np.float64))
+            else:
+                result.append(np.asarray(applied, dtype=np.float64))
         y_unit = _result_unit(op, left.y_unit, right.y_unit)
-        return EvalResult(value=result, y_unit=y_unit, y_unit_label=y_unit, y_label="")
+        return EvalResult(
+            value=result,
+            y_unit=y_unit,
+            y_unit_label=y_unit,
+            y_label="",
+            sample_mode=_result_sample_mode(left, right),
+        )
 
     # Scalar or series arithmetic
     if op in ("+", "-"):
@@ -440,19 +472,25 @@ def _eval_binop(node: BinOpNode, resolve: ResolveFn, x: np.ndarray) -> EvalResul
         right.y_unit_label if y_unit == right.y_unit else y_unit
     )
     y_label = left.y_label or right.y_label
-    return EvalResult(value=result_val, y_unit=y_unit, y_unit_label=unit_label, y_label=y_label)
+    return EvalResult(
+        value=result_val,
+        y_unit=y_unit,
+        y_unit_label=unit_label,
+        y_label=y_label,
+        sample_mode=_result_sample_mode(left, right),
+    )
 
 
-def _apply_op(op: str, a: ExprResult, b: ExprResult) -> ExprResult:
+def _apply_op(op: str, a: ExprResult, b: ExprResult) -> np.ndarray | float:
     if op == "+":
-        return _arr(a) + _arr(b)  # type: ignore[operator]
+        return _arr(a) + _arr(b)
     if op == "-":
-        return _arr(a) - _arr(b)  # type: ignore[operator]
+        return _arr(a) - _arr(b)
     if op == "*":
-        return _arr(a) * _arr(b)  # type: ignore[operator]
+        return _arr(a) * _arr(b)
     if op == "/":
         with np.errstate(divide="ignore", invalid="ignore"):
-            return _arr(a) / _arr(b)  # type: ignore[operator]
+            return _arr(a) / _arr(b)
     raise ValueError(f"Unknown operator: {op}")
 
 
@@ -470,6 +508,20 @@ def _list_len(v: ExprResult) -> int:
     if isinstance(v, list):
         return len(v)
     return 1
+
+
+def _result_sample_mode(left: EvalResult, right: EvalResult) -> SampleMode:
+    if _is_scalar_value(left.value):
+        return right.sample_mode
+    if _is_scalar_value(right.value):
+        return left.sample_mode
+    if left.sample_mode == "step" and right.sample_mode == "step":
+        return "step"
+    return "linear"
+
+
+def _is_scalar_value(value: ExprResult) -> bool:
+    return isinstance(value, float)
 
 
 def _is_scalar_unit(r: EvalResult) -> bool:
@@ -506,14 +558,26 @@ def _eval_call(node: CallNode, resolve: ResolveFn, x: np.ndarray) -> EvalResult:
             result = np.zeros_like(x, dtype=np.float64)
         else:
             result = np.nansum(np.stack(series_list, axis=0), axis=0)
-        return EvalResult(value=result, y_unit=arg_result.y_unit, y_unit_label=arg_result.y_unit_label, y_label="sum")
+        return EvalResult(
+            value=result,
+            y_unit=arg_result.y_unit,
+            y_unit_label=arg_result.y_unit_label,
+            y_label="sum",
+            sample_mode=arg_result.sample_mode,
+        )
 
     if fn == "abs":
         if len(node.args) != 1:
             raise ValueError("abs() takes exactly one argument")
         inner = _eval(node.args[0], resolve, x)
         val = _apply_abs(inner.value)
-        return EvalResult(value=val, y_unit=inner.y_unit, y_unit_label=inner.y_unit_label, y_label=inner.y_label)
+        return EvalResult(
+            value=val,
+            y_unit=inner.y_unit,
+            y_unit_label=inner.y_unit_label,
+            y_label=inner.y_label,
+            sample_mode=inner.sample_mode,
+        )
 
     if fn == "ddt":
         if len(node.args) != 1:
@@ -525,7 +589,7 @@ def _eval_call(node: CallNode, resolve: ResolveFn, x: np.ndarray) -> EvalResult:
             return EvalResult(value=result_list, y_unit=ddt_unit, y_unit_label=ddt_unit, y_label=inner.y_label)
         if isinstance(inner.value, float):
             raise ValueError("ddt() cannot be applied to a scalar expression")
-        ddt_val = _ddt_series(inner.value, x)
+        ddt_val = _ddt_series(np.asarray(inner.value, dtype=np.float64), x)
         ddt_unit = _ddt_unit(inner.y_unit)
         return EvalResult(value=ddt_val, y_unit=ddt_unit, y_unit_label=ddt_unit, y_label=inner.y_label)
 
@@ -537,7 +601,8 @@ def _eval_call(node: CallNode, resolve: ResolveFn, x: np.ndarray) -> EvalResult:
             raise ValueError("rms() cannot be applied to an array-of-series; use a scalar ref or reduce first")
         if isinstance(inner.value, float):
             return EvalResult(value=abs(inner.value), y_unit=inner.y_unit, y_unit_label=inner.y_unit_label, y_label=inner.y_label)
-        finite = inner.value[np.isfinite(inner.value)]
+        inner_arr = np.asarray(inner.value, dtype=np.float64)
+        finite = inner_arr[np.isfinite(inner_arr)]
         rms_val = float(np.sqrt(np.mean(finite ** 2))) if finite.size else float("nan")
         return EvalResult(value=rms_val, y_unit=inner.y_unit, y_unit_label=inner.y_unit_label, y_label=inner.y_label)
 
@@ -549,7 +614,8 @@ def _eval_call(node: CallNode, resolve: ResolveFn, x: np.ndarray) -> EvalResult:
             raise ValueError("average() cannot be applied to an array-of-series; use a scalar ref or reduce first")
         if isinstance(inner.value, float):
             return inner
-        finite = inner.value[np.isfinite(inner.value)]
+        inner_arr = np.asarray(inner.value, dtype=np.float64)
+        finite = inner_arr[np.isfinite(inner_arr)]
         avg_val = float(np.mean(finite)) if finite.size else float("nan")
         return EvalResult(value=avg_val, y_unit=inner.y_unit, y_unit_label=inner.y_unit_label, y_label=inner.y_label)
 
@@ -562,9 +628,21 @@ def _eval_array_arg(node: ASTNode, resolve: ResolveFn, x: np.ndarray) -> EvalRes
         er = resolve(node.a_pat, node.b_pat, "array")
         # Normalise to list[ndarray] so sum() always gets an array
         if isinstance(er.value, np.ndarray):
-            return EvalResult(value=[er.value], y_unit=er.y_unit, y_unit_label=er.y_unit_label, y_label=er.y_label)
+            return EvalResult(
+                value=[er.value],
+                y_unit=er.y_unit,
+                y_unit_label=er.y_unit_label,
+                y_label=er.y_label,
+                sample_mode=er.sample_mode,
+            )
         if isinstance(er.value, float):
-            return EvalResult(value=[np.full_like(x, er.value, dtype=np.float64)], y_unit=er.y_unit, y_unit_label=er.y_unit_label, y_label=er.y_label)
+            return EvalResult(
+                value=[np.full_like(x, er.value, dtype=np.float64)],
+                y_unit=er.y_unit,
+                y_unit_label=er.y_unit_label,
+                y_label=er.y_label,
+                sample_mode=er.sample_mode,
+            )
         return er  # already list[ndarray]
     # Non-ref arg — evaluate normally
     return _eval(node, resolve, x)

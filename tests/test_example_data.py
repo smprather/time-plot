@@ -8,7 +8,7 @@ from time_plot.example_data import write_example_data_files
 def test_write_example_data_files_creates_expected_files(tmp_path: Path) -> None:
     written = write_example_data_files(tmp_path)
 
-    assert [path.name for path in written] == ["sine.csv", "cosine.csv", "spice_pwl.spi"]
+    assert [path.name for path in written] == ["sine.csv", "cosine.csv", "spice_pwl.spi", "logic.vcd"]
 
     sine_header = (tmp_path / "sine.csv").read_text(encoding="utf-8").splitlines()[0]
     cosine_header = (tmp_path / "cosine.csv").read_text(encoding="utf-8").splitlines()[0]
@@ -18,3 +18,4 @@ def test_write_example_data_files_creates_expected_files(tmp_path: Path) -> None
     assert len((tmp_path / "sine.csv").read_text(encoding="utf-8").splitlines()) == 1001
     assert len((tmp_path / "cosine.csv").read_text(encoding="utf-8").splitlines()) == 801
     assert (tmp_path / "spice_pwl.spi").exists()
+    assert "$enddefinitions" in (tmp_path / "logic.vcd").read_text(encoding="utf-8")

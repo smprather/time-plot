@@ -47,3 +47,30 @@
   - When `naming_method` is `positive_node_name`, the `data_set_name` is the positive terminal name
     (second token).
     Example: `ifoo bar 0 pwl 0 0` → `data_set_name` is `bar`.
+
+## VCD Logic Plugin
+
+- Format name: `VCD Logic`
+- Plugin ID: `vcd`
+- Plugin package directory: `plugins/vcd`
+- Parses scalar 1-bit signals from Value Change Dump files.
+- Recognition rule:
+  - filename must end in `.vcd`
+  - file must contain `$enddefinitions`
+- `$timescale` is required and is converted to seconds.
+- `$scope` and `$upscope` build hierarchical series names.
+  - Example: `$scope module top $end`, `$var wire 1 ! clk $end` -> `top.clk`
+- Only `$var ... 1 ... $end` definitions are listed and parsed.
+  - Vector/bus definitions are skipped.
+- Supported scalar value changes:
+  - `0<id>` -> `0.0`
+  - `1<id>` -> `1.0`
+  - `z<id>` -> numeric `NaN`, rendered as an orange midline
+  - `x<id>` -> numeric `NaN`, rendered as red low/high rails
+- Duplicate changes at the same timestamp keep the final value for that signal.
+- Each parsed signal has `y_unit` set to `logic`, `y_unit_label` set to `Logic`, and `sample_mode` set to `step`.
+- Each parsed signal also sets `logic_states` so the renderer can distinguish `x` and `z` from ordinary gaps.
+- Step-mode logic traces are aligned by previous-held value, not linear interpolation.
+- Logic traces render as separate stacked lanes with vertical edges at exact VCD timestamps and no `Logic` y-axis title.
+- Logic legend rows group all helper lines for one signal and display `0`/`1`/`X`/`Z`.
+- Logic plots omit numeric summary statistics, because `x`/`z` states are not ordinary numeric values.

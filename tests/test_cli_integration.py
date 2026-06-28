@@ -106,3 +106,20 @@ def test_plot_command_no_sources_uses_example(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert output_html.exists()
+
+
+def test_plot_command_vcd_logic_file(tmp_path: Path) -> None:
+    runner = CliRunner()
+    output_html = tmp_path / "logic.html"
+
+    result = runner.invoke(cli, [
+        "-f", str(_sample("logic.vcd")),
+        "--output", str(output_html),
+        "--no-open-browser",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert output_html.exists()
+    html = output_html.read_text(encoding="utf-8")
+    assert "top.clk" in html
+    assert "uPlot.paths.stepped" in html

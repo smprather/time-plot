@@ -28,3 +28,11 @@
         - A square wave sequence with amplitude of 1 volt
         - Vlow=0.0, Vhigh=0.9, Trise/fall=0.07us, period=1.00us
         - Voltage source is named clk_1p00us
+  - `logic.vcd`
+    - VCD formatted scalar logic signals
+    - Timescale is 1ns
+    - Top-level scope is `top`
+    - Signals:
+      - `top.clk`: toggles over 0ns to 30ns
+      - `top.reset_n`: starts low, rises at 5ns, holds high to 30ns
+      - `top.data`: includes `x` and `z` intervals for gap rendering

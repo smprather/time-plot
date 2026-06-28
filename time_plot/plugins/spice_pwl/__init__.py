@@ -20,7 +20,7 @@ _SPICE_SUFFIXES: dict[str, float] = {
 }
 
 # Longest-first so "meg" is tried before "m".
-_SUFFIX_ORDER = sorted(_SPICE_SUFFIXES, key=len, reverse=True)
+_SUFFIX_ORDER: list[str] = sorted(_SPICE_SUFFIXES, key=lambda suffix: len(suffix), reverse=True)
 
 
 def short_description() -> str:
